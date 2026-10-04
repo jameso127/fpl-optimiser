@@ -11,6 +11,9 @@ class Settings(BaseSettings):
     dry_run: bool = False
     gameweek: int | None = None
     season: str | None = None  # e.g. "2026-27"; default: derived from the data
+    # Feed FPL's ep_next to the model as a feature. Off: the backtest shows it adds ~nothing
+    # (docs/backtest.md) and it ties training to a third-party archive for history.
+    use_ep_next: bool = False
 
     fpl_base_url: str = "https://fantasy.premierleague.com/api"
     fpl_user_agent: str = "fpl-optimiser-demo/0.1"

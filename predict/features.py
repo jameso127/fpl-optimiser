@@ -3,6 +3,11 @@
 A row is (player, gameweek g). Form features use only live stats from gameweeks < g (every
 rolling window is lagged by one gameweek). Fixture features for g (opponent, home/away, FPL
 difficulty and strength ratings) are known before g's deadline, so they are allowed.
+
+`ep_next` (FPL's expected points) for gameweek g is allowed only because it is published
+before g's deadline. It is taken from the players snapshot of gameweek g itself, never from a
+later one. For past seasons the snapshot comes from a community archive whose capture timing
+is undocumented; see docs/backtest.md for the audit and caveats.
 """
 
 import numpy as np
@@ -18,6 +23,8 @@ FEATURES = [
     "xgi_l5", "xgc_l5", "bps_l5", "ict_l5", "games_played",
     "fix_n", "fix_difficulty", "fix_home", "own_att", "own_def", "opp_att", "opp_def",
 ]  # fmt: skip
+
+XP_FEATURES = [*FEATURES, "ep_next"]
 
 
 def _lagged_mean(grid: pd.DataFrame, col: str, window: int | None) -> pd.Series:
@@ -75,11 +82,13 @@ def build_features(
     teams: pd.DataFrame,
     fixtures: pd.DataFrame,
     gameweeks: list[int],
+    ep_next: pd.DataFrame | None = None,
 ) -> pd.DataFrame:
     """Feature rows for every player in `players` for each of `gameweeks`.
 
     `target` is that gameweek's actual points where `live` has them (NaN otherwise, e.g. the
-    gameweek being predicted). Position and team come from the `players` snapshot.
+    gameweek being predicted). Position and team come from the `players` snapshot. `ep_next`
+    (columns id, gameweek, ep_next) is FPL's expected points as published for each gameweek.
     """
     ids = players["id"].unique()
     grid = pd.MultiIndex.from_product(
@@ -116,8 +125,15 @@ def build_features(
     out = out.merge(fixture_features(fixtures, teams), on=["team", "gameweek"], how="left")
     out["fix_n"] = out["fix_n"].fillna(0)
 
+    # Merged on (id, gameweek) so a row only ever sees the expected points published for its
+    # own gameweek, never a later one. Gameweeks with no stored value stay NaN.
+    if ep_next is None:
+        out["ep_next"] = np.nan
+    else:
+        out = out.merge(ep_next[["id", "gameweek", "ep_next"]], on=["id", "gameweek"], how="left")
+
     out = out[out["gameweek"].isin(gameweeks)].reset_index(drop=True)
-    return out[["id", "gameweek", "target", *FEATURES]]
+    return out[["id", "gameweek", "target", *XP_FEATURES]]
 
 
 def usable(df: pd.DataFrame) -> pd.DataFrame:

@@ -23,6 +23,22 @@ def load_live(settings: Settings, season: str, before: int | None = None) -> pd.
     return pd.concat(frames, ignore_index=True)
 
 
+def load_ep_next(settings: Settings, season: str, upto: int | None = None) -> pd.DataFrame:
+    """FPL's expected points per (player, gameweek) from each stored players snapshot <= `upto`.
+
+    Snapshot g holds the value published for gameweek g, so rows line up one to one.
+    """
+    frames = []
+    for gw in available_gameweeks(settings, season, "players"):
+        if upto is not None and gw > upto:
+            continue
+        snap = read_parquet(settings, gw_path(season, gw, "players"))
+        frames.append(snap[["id", "ep_next"]].assign(gameweek=gw))
+    if not frames:
+        return pd.DataFrame(columns=["id", "gameweek", "ep_next"])
+    return pd.concat(frames, ignore_index=True)
+
+
 def season_features(
     settings: Settings,
     season: str,
@@ -43,6 +59,7 @@ def season_features(
     live = load_live(settings, season, before=live_before)
     if gameweeks is None:
         gameweeks = list(range(1, int(live["gameweek"].max()) + 1))
-    feats = features.build_features(live, players, teams, fixtures, gameweeks)
+    ep_next = load_ep_next(settings, season, upto=snapshot_gw)
+    feats = features.build_features(live, players, teams, fixtures, gameweeks, ep_next)
     feats.insert(0, "season", season)
     return feats

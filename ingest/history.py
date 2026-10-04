@@ -6,11 +6,12 @@ seasons. For each season it writes season=<yyyy-yy>/gw=<n>/{live,players,teams,f
 
 - live:    per-player stats for the gameweek. Double gameweeks (one source row per fixture)
            are summed, matching the live API.
-- players: static info from players_raw (id, name, team, position) plus, for that gameweek,
-           `ep_next` = the archive's `xP` summed over the gameweek's fixtures, and `now_cost`.
-           This stands in for FPL's pre-deadline expected points as the backtest benchmark.
-           NOTE: how early in the gameweek the archive captured `xP` is not documented, so
-           treat it as a benchmark of unknown timing, not a guaranteed pre-deadline number.
+- players: static info from players_raw (id, name, team, position) plus `ep_next`, FPL's
+           expected points as known BEFORE that gameweek's deadline. The archive's `xP` on row g
+           was captured after gameweek g (verified: its change tracks points scored in g), so
+           it is stored against gameweek g+1. Using the same-gameweek value would leak the
+           outcome. Gameweek 1 therefore has no `ep_next`. Gameweeks the archive recorded as
+           all-zero are null, and values above 20 are treated as data errors.
 - teams, fixtures: the season's tables, repeated per gameweek like live snapshots.
 
 Players' status and chance-of-playing are not available historically and are omitted.
@@ -46,6 +47,8 @@ LIVE_STATS = [
     "total_points",
 ]  # fmt: skip
 
+MAX_PLAUSIBLE_XP = 20.0
+
 PLAYER_STATIC = ["id", "web_name", "first_name", "second_name", "team", "element_type"]
 
 Fetch = Callable[[str], bytes]
@@ -68,22 +71,34 @@ def live_from_merged(merged: pd.DataFrame) -> pd.DataFrame:
 
 
 def expected_points_by_gameweek(merged: pd.DataFrame) -> pd.DataFrame:
-    """id, gameweek, ep_next (summed `xP`) and now_cost (price after the last fixture)."""
+    """id, gameweek, ep_next: FPL's expected points as published BEFORE `gameweek`'s deadline.
+
+    The archive's `xP` on row g was captured after gameweek g's matches (its week-on-week
+    change tracks points scored in g, correlation +0.4 to +0.6), so using it for g would leak
+    the outcome. It is the expected-points figure FPL showed for g+1, so it is stored against
+    gameweek g+1, which matches the meaning of a live pre-deadline snapshot. Gameweek 1 has none.
+    """
     df = merged.rename(columns={"element": "id", "GW": "gameweek"})
-    grouped = df.groupby(["id", "gameweek"])
-    out = grouped["xP"].sum(min_count=1).rename("ep_next").to_frame()
-    out["now_cost"] = grouped["value"].last()
-    out = out.reset_index()
+    out = df.groupby(["id", "gameweek"])["xP"].sum(min_count=1).rename("ep_next").reset_index()
     # The archive records a gameweek it failed to capture as xP = 0 for every player (seen in
     # 2025-26). A real gameweek always has some positive xP, so all-zero means missing.
     captured = out.groupby("gameweek")["ep_next"].transform(lambda s: (s.fillna(0) > 0).any())
     out.loc[~captured.astype(bool), "ep_next"] = float("nan")
+    # Implausible values are data errors (a single player's xP above 20 in one gameweek; the
+    # archive has ~120 such rows, up to 52.8), not predictions.
+    out.loc[out["ep_next"] > MAX_PLAUSIBLE_XP, "ep_next"] = float("nan")
+    out["gameweek"] += 1  # captured after gameweek g, so it is what was known before g+1
     return out
 
 
+def selectable_players(players_raw: pd.DataFrame) -> pd.DataFrame:
+    """Drop non-players (managers, assistant managers) that some seasons' files include."""
+    return players_raw[players_raw["element_type"].isin([1, 2, 3, 4])]
+
+
 def players_snapshot(players_raw: pd.DataFrame, ep_for_gw: pd.DataFrame) -> pd.DataFrame:
-    static = select_columns(players_raw, PLAYER_STATIC)
-    return static.merge(ep_for_gw[["id", "ep_next", "now_cost"]], on="id", how="left")
+    static = select_columns(selectable_players(players_raw), PLAYER_STATIC)
+    return static.merge(ep_for_gw[["id", "ep_next"]], on="id", how="left")
 
 
 def import_season(settings: Settings, season: str, fetch: Fetch) -> int:
@@ -93,6 +108,7 @@ def import_season(settings: Settings, season: str, fetch: Fetch) -> int:
     fixtures = select_columns(read_csv(fetch(f"{season}/fixtures.csv")), FIXTURE_COLUMNS)
 
     live = live_from_merged(merged)
+    live = live[live["id"].isin(selectable_players(players_raw)["id"])]
     ep = expected_points_by_gameweek(merged)
     gameweeks = sorted(int(g) for g in live["gameweek"].unique())
     for gw in gameweeks:

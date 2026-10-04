@@ -1,3 +1,4 @@
+import numpy as np
 import pandas as pd
 import pytest
 
@@ -5,7 +6,7 @@ from common.config import Settings
 from common.storage import gw_path, read_parquet, write_parquet
 from ingest.dry_run import DryRunSource
 from ingest.main import run as run_ingest
-from predict import backtest, model
+from predict import backtest, features, model
 from predict.features import build_features
 from predict.main import run as run_predict
 
@@ -44,6 +45,16 @@ def test_dry_run_job_end_to_end(tmp_path) -> None:  # type: ignore[no-untyped-de
     assert p6["xpts"] == pytest.approx(p6["xpts_raw"] * 0.5)
     # Dry runs stay out of the real data root.
     assert settings.data_root.endswith("dry_run")
+
+
+def test_ep_next_feature_is_off_by_default_and_switchable(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    assert Settings().use_ep_next is False
+    settings = Settings(data_dir=str(tmp_path), dry_run=True, use_ep_next=True)
+    run_ingest(settings, DryRunSource())
+
+    gameweek = run_predict(settings)
+    out = read_parquet(settings, gw_path(SEASON, gameweek, "predictions"))
+    assert len(out) == 8 and out["xpts"].notna().all()
 
 
 def test_dry_run_never_resolves_to_the_bucket() -> None:
@@ -90,7 +101,7 @@ def _two_season_features(synthetic: dict[str, pd.DataFrame]) -> pd.DataFrame:
     for season in ("2024-25", "2025-26"):
         f = build_features(
             synthetic["live"], synthetic["players"], synthetic["teams"], synthetic["fixtures"],
-            list(range(1, 9)),
+            list(range(1, 9)), synthetic["ep"],
         )  # fmt: skip
         f.insert(0, "season", season)
         frames.append(f)
@@ -101,28 +112,36 @@ def test_walk_forward_never_trains_on_the_test_gameweek_or_later(
     synthetic: dict[str, pd.DataFrame], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     feats = _two_season_features(synthetic)
-    seen: list[pd.DataFrame] = []
+    seen: list[tuple[pd.DataFrame, list[str] | None]] = []
     real_train = backtest.model.train
 
-    def spy(x: pd.DataFrame, y: pd.Series):  # type: ignore[no-untyped-def]
-        seen.append(x)
-        return real_train(x, y)
+    def spy(x: pd.DataFrame, y: pd.Series, columns: list[str] | None = None):  # type: ignore[no-untyped-def]
+        seen.append((x, columns))
+        return real_train(x, y, columns)
 
     monkeypatch.setattr(backtest.model, "train", spy)
-    labelled = feats.assign(row=range(len(feats)))
     preds = backtest.walk_forward(feats, ["2025-26"])
 
     assert sorted(set(preds["gameweek"])) == [3, 4, 5, 6, 7, 8]
     assert set(preds["season"]) == {"2025-26"}
-    assert len(seen) == 6
-    # The earlier season is always fully available; the test season only before gameweek g.
-    for g, train_x in zip(range(3, 9), seen, strict=True):
-        rows = labelled.loc[train_x.index]
-        assert (rows["season"] == "2024-25").sum() == (
-            (labelled["season"] == "2024-25") & (labelled["fix_n"] >= 1)
-        ).sum()
-        in_season = rows[rows["season"] == "2025-26"]
-        assert (in_season["gameweek"] < g).all()
+    assert len(seen) == 12  # a plain model and an ep_next model for each of 6 gameweeks
+    earlier_rows = ((feats["season"] == "2024-25") & (feats["fix_n"] >= 1)).sum()
+    for g, (plain, xp) in zip(range(3, 9), zip(seen[0::2], seen[1::2], strict=True), strict=True):
+        assert plain[1] == features.FEATURES and xp[1] == features.XP_FEATURES
+        for train_x, _ in (plain, xp):
+            rows = feats.loc[train_x.index]
+            # The earlier season is always fully available; the test season only before g.
+            assert (rows["season"] == "2024-25").sum() == earlier_rows
+            assert (rows[rows["season"] == "2025-26"]["gameweek"] < g).all()
+
+
+def test_model_using_a_good_ep_next_beats_the_model_without_it(
+    synthetic: dict[str, pd.DataFrame],
+) -> None:
+    preds = backtest.walk_forward(_two_season_features(synthetic), ["2025-26"])
+    mae = lambda col: (preds[col] - preds["target"]).abs().mean()  # noqa: E731
+
+    assert mae("model_xp") < mae("model")
 
 
 def test_report_is_honest_about_missing_ep_next(synthetic: dict[str, pd.DataFrame]) -> None:
@@ -144,6 +163,7 @@ def test_ep_next_is_only_scored_on_rows_that_have_it() -> None:
             "target": [2.0, 4.0, 1.0, 5.0],
             "min_l5": 90.0,
             "model": [2.0, 4.0, 1.0, 5.0],
+            "model_xp": [2.0, 4.0, 1.0, 5.0],
             "baseline_l5": [1.0, 1.0, 1.0, 1.0],
             "baseline_season": [1.0, 1.0, 1.0, 1.0],
             "ep_next": [None, None, 3.0, 3.0],  # not captured for gameweek 3
@@ -157,6 +177,39 @@ def test_ep_next_is_only_scored_on_rows_that_have_it() -> None:
     h2h = tables["2025-26: head-to-head with ep_next, all players"]
     assert set(h2h["rows"]) == {2}  # every method scored on the same two rows
     assert "1 of 2 tested gameweeks" in backtest.render_report(preds)
+
+
+def _audit_frame(leaky: bool) -> pd.DataFrame:
+    """ep_next that either contains its own gameweek's points (leaky) or only the previous's."""
+    rng = np.random.default_rng(1)
+    rows = []
+    for pid in range(1, 301):
+        pts = rng.poisson(3.0, 12).astype(float)
+        for gw in range(1, 13):
+            known = pts[gw - 1] if leaky else (pts[gw - 2] if gw > 1 else np.nan)
+            rows.append(
+                {"season": "2024-25", "id": pid, "gameweek": gw, "target": pts[gw - 1],
+                 "min_l5": 90.0, "ep_next": 2.0 + 0.5 * known}
+            )  # fmt: skip
+    return pd.DataFrame(rows)
+
+
+def test_leak_audit_flags_ep_next_that_contains_its_own_gameweek() -> None:
+    clean = backtest.leak_audit(_audit_frame(leaky=False))
+    leaky = backtest.leak_audit(_audit_frame(leaky=True))
+
+    assert list(clean["status"]) == ["OK"]
+    assert abs(clean["corr_with_points_in_g"].iloc[0]) < 0.1
+    assert list(leaky["status"]) == ["LEAK WARNING"]
+    assert leaky["corr_with_points_in_g"].iloc[0] > 0.3
+
+
+def test_report_shows_the_leak_audit(synthetic: dict[str, pd.DataFrame]) -> None:
+    preds = backtest.walk_forward(_two_season_features(synthetic), ["2025-26"])
+    report = backtest.render_report(preds, backtest.leak_audit(_audit_frame(leaky=True)))
+
+    assert "Leak audit" in report
+    assert "LEAK WARNING" in report
 
 
 def test_report_when_no_history() -> None:

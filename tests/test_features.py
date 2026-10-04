@@ -4,11 +4,59 @@ import pytest
 from predict import features
 
 
-def _build(d: dict[str, pd.DataFrame], live: pd.DataFrame | None = None) -> pd.DataFrame:
+def _build(
+    d: dict[str, pd.DataFrame],
+    live: pd.DataFrame | None = None,
+    ep: pd.DataFrame | None = None,
+) -> pd.DataFrame:
     return features.build_features(
         d["live"] if live is None else live,
         d["players"], d["teams"], d["fixtures"], list(range(1, 10)),
+        d["ep"] if ep is None else ep,
     )  # fmt: skip
+
+
+def test_ep_next_comes_only_from_the_same_gameweek(synthetic: dict[str, pd.DataFrame]) -> None:
+    ep = synthetic["ep"].assign(ep_next=lambda df: df["gameweek"].astype(float))
+    feats = _build(synthetic, ep=ep)
+
+    # Row for gameweek g carries exactly the value published for g: not g-1, not g+1.
+    assert (feats["ep_next"] == feats["gameweek"]).all()
+
+
+def test_changing_later_ep_next_does_not_change_earlier_rows(
+    synthetic: dict[str, pd.DataFrame],
+) -> None:
+    base = _build(synthetic)
+    ep = synthetic["ep"].copy()
+    ep.loc[ep["gameweek"] >= 6, "ep_next"] = 99.0
+    altered = _build(synthetic, ep=ep)
+
+    before = base["gameweek"] <= 5
+    pd.testing.assert_frame_equal(base[before], altered[altered["gameweek"] <= 5])
+    assert (altered.loc[altered["gameweek"] >= 6, "ep_next"] == 99.0).all()
+
+
+def test_ep_next_never_leaks_into_form_features(synthetic: dict[str, pd.DataFrame]) -> None:
+    base = _build(synthetic)
+    altered = _build(synthetic, ep=synthetic["ep"].assign(ep_next=-7.0))
+
+    pd.testing.assert_frame_equal(base[features.FEATURES], altered[features.FEATURES])
+
+
+def test_gameweeks_without_a_stored_snapshot_have_null_ep_next(
+    synthetic: dict[str, pd.DataFrame],
+) -> None:
+    ep = synthetic["ep"][synthetic["ep"]["gameweek"] == 9]
+    feats = _build(synthetic, ep=ep)
+
+    assert feats.loc[feats["gameweek"] < 9, "ep_next"].isna().all()
+    assert feats.loc[feats["gameweek"] == 9, "ep_next"].notna().all()
+    assert (
+        _build(synthetic, ep=pd.DataFrame(columns=["id", "gameweek", "ep_next"]))["ep_next"]
+        .isna()
+        .all()
+    )
 
 
 def test_rolling_features_use_only_prior_gameweeks(synthetic: dict[str, pd.DataFrame]) -> None:

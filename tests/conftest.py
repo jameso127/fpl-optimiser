@@ -52,4 +52,14 @@ def synthetic() -> dict[str, pd.DataFrame]:
             for h, a in ((1, 2), (3, 4))
         ]
     )  # fmt: skip
-    return {"players": players, "live": live, "teams": teams, "fixtures": fixtures}
+    # FPL-style expected points: the player's true underlying rate for every gameweek (a good
+    # but imperfect forecast, since realised points are Poisson draws around it). Never derived
+    # from the realised points themselves.
+    ep = pd.DataFrame(
+        [
+            {"id": pid, "gameweek": gw, "ep_next": float(skill[pid - 1])}
+            for pid in players["id"]
+            for gw in range(1, n_gws + 2)
+        ]
+    )
+    return {"players": players, "live": live, "teams": teams, "fixtures": fixtures, "ep": ep}

@@ -58,11 +58,17 @@ def run(settings: Settings) -> int:
         ep = players.set_index("id")["ep_next"]
         raw = to_score["id"].map(ep).fillna(0.0).to_numpy()
     else:
-        booster = model.train(train_rows, train_rows["target"])
+        columns = features.XP_FEATURES if settings.use_ep_next else features.FEATURES
+        booster = model.train(train_rows, train_rows["target"], columns)
         raw = model.predict(booster, to_score)
         log.info(
             "trained",
-            extra={"train_rows": len(train_rows), "train_seasons": len(past), "season": season},
+            extra={
+                "train_rows": len(train_rows),
+                "train_seasons": len(past),
+                "season": season,
+                "use_ep_next": settings.use_ep_next,
+            },
         )
 
     out = pd.DataFrame({"id": to_score["id"], "gameweek": gameweek, "xpts_raw": raw})

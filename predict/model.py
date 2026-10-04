@@ -23,12 +23,14 @@ PARAMS = {
 ROUNDS = 150
 
 
-def train(x: pd.DataFrame, y: pd.Series) -> lgb.Booster:
-    return lgb.train(PARAMS, lgb.Dataset(x[FEATURES], label=y), num_boost_round=ROUNDS)
+def train(x: pd.DataFrame, y: pd.Series, columns: list[str] | None = None) -> lgb.Booster:
+    """Fit on `columns` (default: form and fixture features, without FPL's ep_next)."""
+    cols = columns or FEATURES
+    return lgb.train(PARAMS, lgb.Dataset(x[cols], label=y), num_boost_round=ROUNDS)
 
 
 def predict(booster: lgb.Booster, x: pd.DataFrame) -> np.ndarray:
-    return np.asarray(booster.predict(x[FEATURES]), dtype=float)
+    return np.asarray(booster.predict(x[booster.feature_name()]), dtype=float)
 
 
 def availability(players: pd.DataFrame) -> pd.Series:
