@@ -10,10 +10,16 @@ class Settings(BaseSettings):
     data_dir: str = "./data"
     dry_run: bool = False
     gameweek: int | None = None
+    season: str | None = None  # e.g. "2026-27"; default: derived from the data
 
     fpl_base_url: str = "https://fantasy.premierleague.com/api"
     fpl_user_agent: str = "fpl-optimiser-demo/0.1"
     fpl_min_interval_seconds: float = 0.5
+
+    # Community archive of past seasons' per-gameweek FPL data (vaastav/Fantasy-Premier-League).
+    history_base_url: str = (
+        "https://raw.githubusercontent.com/vaastav/Fantasy-Premier-League/master/data"
+    )
 
     log_level: str = "INFO"
 

@@ -1,4 +1,4 @@
-"""Ingest job: FPL API -> Parquet in gs://$DATA_BUCKET/gw=<n>/.
+"""Ingest job: FPL API -> Parquet in gs://$DATA_BUCKET/season=<yyyy-yy>/gw=<n>/.
 
 For target gameweek n it writes a snapshot (players, teams, events, fixtures) to gw=n/, and
 live per-player stats for every finished gameweek, backfilling any that are missing and
@@ -22,8 +22,12 @@ log = logging.getLogger(__name__)
 
 def run(settings: Settings, source: FplSource) -> int:
     bootstrap = source.bootstrap()
+    season = settings.season or transform.season_label(bootstrap)
     gameweek = settings.gameweek or transform.target_gameweek(bootstrap)
-    log.info("ingest start", extra={"gameweek": gameweek, "dry_run": settings.dry_run})
+    log.info(
+        "ingest start",
+        extra={"season": season, "gameweek": gameweek, "dry_run": settings.dry_run},
+    )
 
     snapshot = {
         "players": transform.players_frame(bootstrap),
@@ -32,19 +36,19 @@ def run(settings: Settings, source: FplSource) -> int:
         "fixtures": transform.fixtures_frame(source.fixtures()),
     }
     for name, df in snapshot.items():
-        uri = write_parquet(settings, df, gw_path(gameweek, name))
+        uri = write_parquet(settings, df, gw_path(season, gameweek, name))
         log.info("wrote snapshot", extra={"uri": uri, "rows": len(df)})
 
     finished = [gw for gw in transform.finished_gameweeks(bootstrap) if gw < gameweek]
     for gw in finished:
-        rel = gw_path(gw, "live")
+        rel = gw_path(season, gw, "live")
         if gw != max(finished) and exists(settings, rel):
             continue
         df = transform.live_frame(source.live(gw), gw)
         uri = write_parquet(settings, df, rel)
         log.info("wrote live stats", extra={"uri": uri, "rows": len(df), "live_gameweek": gw})
 
-    log.info("ingest done", extra={"gameweek": gameweek})
+    log.info("ingest done", extra={"season": season, "gameweek": gameweek})
     return gameweek
 
 

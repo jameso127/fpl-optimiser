@@ -28,8 +28,10 @@ class FplClient:
         client: httpx.Client | None = None,
         max_retries: int = 5,
         backoff_base: float = 1.0,
+        base_url: str | None = None,
     ) -> None:
-        self._base = settings.fpl_base_url.rstrip("/")
+        """`base_url` lets other polite, public sources (e.g. CSV on GitHub) reuse the client."""
+        self._base = (base_url or settings.fpl_base_url).rstrip("/")
         self._min_interval = settings.fpl_min_interval_seconds
         self._max_retries = max_retries
         self._backoff_base = backoff_base
@@ -39,8 +41,11 @@ class FplClient:
         self._cache: dict[str, Any] = {}
         self._last_request = 0.0
 
-    def get(self, path: str) -> Any:
-        """GET `path` (relative to the base URL); responses are cached for the client's lifetime."""
+    def get(self, path: str, raw: bool = False) -> Any:
+        """GET `path` (relative to the base URL), parsed as JSON or, with `raw`, as bytes.
+
+        Responses are cached for the client's lifetime.
+        """
         if path in self._cache:
             return self._cache[path]
 
@@ -55,7 +60,7 @@ class FplClient:
                 self._last_request = time.monotonic()
                 if response.status_code not in _RETRY_STATUS:
                     response.raise_for_status()
-                    data = response.json()
+                    data = response.content if raw else response.json()
                     self._cache[path] = data
                     return data
                 error = f"HTTP {response.status_code}"

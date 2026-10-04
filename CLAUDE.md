@@ -21,7 +21,7 @@ it needs an infra PR first.
 Provided to this repo as GitHub Actions variables / runtime env vars:
 - `GCP_PROJECT_ID`, `GCP_REGION`, `GCP_WIF_PROVIDER`, `GCP_DEPLOYER_SA`
 - `ARTIFACT_REGISTRY_REPO` (image repo path)
-- `DATA_BUCKET` (GCS bucket for Parquet data), layout: `gs://$DATA_BUCKET/gw=<n>/...`
+- `DATA_BUCKET` (GCS bucket for Parquet data), layout: `gs://$DATA_BUCKET/season=<yyyy-yy>/gw=<n>/...`
 - Cloud Run jobs (pre-created by infra): `fpl-ingest`, `fpl-predict`, `fpl-optimise`, `fpl-notify`
 - Cloud Run service (pre-created by infra): `fpl-api`
 If I ask for a job/service that doesn't exist yet, say so rather than assuming it does.

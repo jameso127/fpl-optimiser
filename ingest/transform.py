@@ -33,12 +33,21 @@ FIXTURE_COLUMNS = [
 ]  # fmt: skip
 
 
-def _select(df: pd.DataFrame, columns: list[str]) -> pd.DataFrame:
+def select_columns(df: pd.DataFrame, columns: list[str]) -> pd.DataFrame:
+    """The listed columns that exist in `df` (APIs and CSVs differ between seasons)."""
     return df[[c for c in columns if c in df.columns]].copy()
 
 
+def season_label(bootstrap: dict[str, Any]) -> str:
+    """e.g. '2026-27', from the first gameweek's deadline (seasons start in August)."""
+    first = min(e["deadline_time"] for e in bootstrap["events"])
+    year, month = int(first[:4]), int(first[5:7])
+    start = year if month >= 6 else year - 1
+    return f"{start}-{(start + 1) % 100:02d}"
+
+
 def players_frame(bootstrap: dict[str, Any]) -> pd.DataFrame:
-    df = _select(pd.DataFrame(bootstrap["elements"]), PLAYER_COLUMNS)
+    df = select_columns(pd.DataFrame(bootstrap["elements"]), PLAYER_COLUMNS)
     for col in _NUMERIC_STRINGS:
         if col in df.columns:
             df[col] = pd.to_numeric(df[col], errors="coerce")
@@ -50,18 +59,18 @@ def players_frame(bootstrap: dict[str, Any]) -> pd.DataFrame:
 
 
 def teams_frame(bootstrap: dict[str, Any]) -> pd.DataFrame:
-    return _select(pd.DataFrame(bootstrap["teams"]), TEAM_COLUMNS)
+    return select_columns(pd.DataFrame(bootstrap["teams"]), TEAM_COLUMNS)
 
 
 def events_frame(bootstrap: dict[str, Any]) -> pd.DataFrame:
-    return _select(
+    return select_columns(
         pd.DataFrame(bootstrap["events"]),
         ["id", "name", "deadline_time", "finished", "is_current", "is_next"],
     )
 
 
 def fixtures_frame(fixtures: list[dict[str, Any]]) -> pd.DataFrame:
-    return _select(pd.DataFrame(fixtures), FIXTURE_COLUMNS)
+    return select_columns(pd.DataFrame(fixtures), FIXTURE_COLUMNS)
 
 
 def live_frame(live: dict[str, Any], gameweek: int) -> pd.DataFrame:
