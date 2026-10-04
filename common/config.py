@@ -19,6 +19,9 @@ class Settings(BaseSettings):
 
     @property
     def data_root(self) -> str:
+        # Dry runs never touch the real bucket or real local data: fixture data would overwrite it.
+        if self.dry_run:
+            return f"{self.data_dir.rstrip('/')}/dry_run"
         return f"gs://{self.data_bucket}" if self.data_bucket else self.data_dir
 
 

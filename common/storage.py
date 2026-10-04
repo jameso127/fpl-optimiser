@@ -1,5 +1,7 @@
 """Parquet I/O against GCS (gs://bucket/...) or a local directory, chosen by Settings."""
 
+import re
+
 import fsspec
 import pandas as pd
 
@@ -29,6 +31,13 @@ def read_parquet(settings: Settings, rel_path: str) -> pd.DataFrame:
     fs, path = fsspec.core.url_to_fs(_uri(settings, rel_path))
     with fs.open(path, "rb") as f:
         return pd.read_parquet(f)
+
+
+def available_gameweeks(settings: Settings, name: str) -> list[int]:
+    """Sorted gameweeks that have a `<name>.parquet` artefact."""
+    fs, root = fsspec.core.url_to_fs(settings.data_root.rstrip("/"))
+    found = fs.glob(f"{root}/gw=*/{name}.parquet")
+    return sorted(int(m.group(1)) for p in found if (m := re.search(r"gw=(\d+)", p)))
 
 
 def exists(settings: Settings, rel_path: str) -> bool:

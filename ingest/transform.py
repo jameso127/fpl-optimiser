@@ -67,7 +67,11 @@ def fixtures_frame(fixtures: list[dict[str, Any]]) -> pd.DataFrame:
 def live_frame(live: dict[str, Any], gameweek: int) -> pd.DataFrame:
     """One row per player: id, gameweek and the per-gameweek stats (minutes, goals, bps, ...)."""
     rows = [{"id": e["id"], "gameweek": gameweek, **e["stats"]} for e in live["elements"]]
-    return pd.DataFrame(rows)
+    df = pd.DataFrame(rows)
+    for col in _NUMERIC_STRINGS:
+        if col in df.columns:
+            df[col] = pd.to_numeric(df[col], errors="coerce")
+    return df
 
 
 def target_gameweek(bootstrap: dict[str, Any]) -> int:

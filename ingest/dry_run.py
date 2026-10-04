@@ -74,7 +74,9 @@ class DryRunSource:
                     "stats": {
                         "minutes": 90, "goals_scored": int(pid % 3 == 0), "assists": 0,
                         "clean_sheets": 0, "bonus": 0, "bps": 20 + pid,
-                        "total_points": 2 + (pid + gameweek) % 6,
+                        "total_points": 2 + (pid + gameweek) % 6, "starts": 1,
+                        "expected_goal_involvements": "0.4", "expected_goals_conceded": "0.9",
+                        "ict_index": "3.2",
                     },
                 }
                 for pid, *_ in _PLAYERS
