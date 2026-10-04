@@ -25,20 +25,20 @@ Generated 2026-10-04. Walk-forward: each gameweek is scored by a model trained o
 | method | MAE | RMSE | Spearman | rows |
 |---|---|---|---|---|
 | model | 0.969 | 1.896 | 0.720 | 6762 |
-| model_xp | 0.965 | 1.897 | 0.723 | 6762 |
+| model_xp | 0.964 | 1.895 | 0.724 | 6762 |
 | baseline_l5 | 1.053 | 2.080 | 0.732 | 6762 |
 | baseline_season | 1.060 | 2.052 | 0.717 | 6762 |
-| ep_next | 1.141 | 2.168 | 0.672 | 6762 |
+| ep_next | 1.141 | 2.166 | 0.672 | 6762 |
 
 ## 2025-26: head-to-head with ep_next, regular players (>= 60 min/game over last 5)
 
 | method | MAE | RMSE | Spearman | rows |
 |---|---|---|---|---|
 | model | 2.247 | 3.044 | 0.297 | 1543 |
-| model_xp | 2.247 | 3.041 | 0.303 | 1543 |
+| model_xp | 2.245 | 3.037 | 0.306 | 1543 |
 | baseline_l5 | 2.637 | 3.398 | 0.189 | 1543 |
 | baseline_season | 2.540 | 3.313 | 0.213 | 1543 |
-| ep_next | 2.677 | 3.534 | 0.187 | 1543 |
+| ep_next | 2.673 | 3.526 | 0.187 | 1543 |
 
 ## 2026-27: all players
 
@@ -62,21 +62,21 @@ Correlation of the change in `ep_next` (g-1 to g) with points scored in g. A pre
 
 | season | rows | corr_with_points_in_g | corr_with_points_in_g-1 | status |
 |---|---|---|---|---|
-| 2022-23 | 4730 | 0.001 | 0.412 | OK |
-| 2023-24 | 5439 | 0.025 | 0.483 | OK |
-| 2024-25 | 5044 | 0.044 | 0.529 | OK |
+| 2022-23 | 4826 | 0.017 | 0.587 | OK |
+| 2023-24 | 5477 | 0.030 | 0.622 | OK |
+| 2024-25 | 5057 | 0.062 | 0.591 | OK |
 | 2025-26 | 1021 | 0.011 | 0.617 | OK |
 
 ## Verdict
 
 - **2025-26: all players**: on MAE `model` beats `baseline_l5`, 0.973 vs 1.052; on Spearman it does NOT beat `baseline_l5`, 0.713 vs 0.720.
 - **2025-26: regular players (>= 60 min/game over last 5)**: on MAE `model` beats `baseline_season`, 2.312 vs 2.493; on Spearman it beats `baseline_season`, 0.275 vs 0.171.
-- **2025-26: head-to-head with ep_next, all players: model_xp vs ep_next**: on MAE `model_xp` beats `ep_next`, 0.965 vs 1.141; on Spearman it beats `ep_next`, 0.723 vs 0.672.
-- **2025-26: head-to-head with ep_next, all players: model_xp vs the model without ep_next**: on MAE `model_xp` beats `model`, 0.965 vs 0.969; on Spearman it beats `model`, 0.723 vs 0.720.
+- **2025-26: head-to-head with ep_next, all players: model_xp vs ep_next**: on MAE `model_xp` beats `ep_next`, 0.964 vs 1.141; on Spearman it beats `ep_next`, 0.724 vs 0.672.
+- **2025-26: head-to-head with ep_next, all players: model_xp vs the model without ep_next**: on MAE `model_xp` beats `model`, 0.964 vs 0.969; on Spearman it beats `model`, 0.724 vs 0.720.
 - **2025-26: head-to-head with ep_next, all players: model vs ep_next**: on MAE `model` beats `ep_next`, 0.969 vs 1.141; on Spearman it beats `ep_next`, 0.720 vs 0.672.
-- **2025-26: head-to-head with ep_next, regular players (>= 60 min/game over last 5): model_xp vs ep_next**: on MAE `model_xp` beats `ep_next`, 2.247 vs 2.677; on Spearman it beats `ep_next`, 0.303 vs 0.187.
-- **2025-26: head-to-head with ep_next, regular players (>= 60 min/game over last 5): model_xp vs the model without ep_next**: on MAE `model_xp` does NOT beat `model`, 2.247 vs 2.247; on Spearman it beats `model`, 0.303 vs 0.297.
-- **2025-26: head-to-head with ep_next, regular players (>= 60 min/game over last 5): model vs ep_next**: on MAE `model` beats `ep_next`, 2.247 vs 2.677; on Spearman it beats `ep_next`, 0.297 vs 0.187.
+- **2025-26: head-to-head with ep_next, regular players (>= 60 min/game over last 5): model_xp vs ep_next**: on MAE `model_xp` beats `ep_next`, 2.245 vs 2.673; on Spearman it beats `ep_next`, 0.306 vs 0.187.
+- **2025-26: head-to-head with ep_next, regular players (>= 60 min/game over last 5): model_xp vs the model without ep_next**: on MAE `model_xp` beats `model`, 2.245 vs 2.247; on Spearman it beats `model`, 0.306 vs 0.297.
+- **2025-26: head-to-head with ep_next, regular players (>= 60 min/game over last 5): model vs ep_next**: on MAE `model` beats `ep_next`, 2.247 vs 2.673; on Spearman it beats `ep_next`, 0.297 vs 0.187.
 - **2026-27: all players**: on MAE `model` beats `baseline_l5`, 1.185 vs 1.260; on Spearman it beats `baseline_l5`, 0.689 vs 0.685.
 - **2026-27: regular players (>= 60 min/game over last 5)**: on MAE `model` beats `baseline_l5`, 2.490 vs 2.865; on Spearman it beats `baseline_l5`, 0.235 vs 0.170.
 

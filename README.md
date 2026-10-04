@@ -21,7 +21,7 @@ optimise) is cheap and runs on demand.
 |---|---|
 | `common/` config, logging, Parquet I/O, FPL client | done |
 | `ingest/` FPL API -> Parquet; `ingest.history` one-off import of past seasons | done |
-| `predict/` LightGBM expected points + walk-forward backtest | done (see results) |
+| `predict/` expected points (FPL's `ep_next` by default; LightGBM optional) + backtest | done |
 | `optimise/`, `notify/`, `api/` | not started |
 | `.github/` CI and deploy | not started |
 
@@ -33,8 +33,8 @@ optimise) is cheap and runs on demand.
   The players snapshot holds FPL's `ep_next`, which cannot be recovered later and is the
   baseline for backtests.
 - `live`: per-player stats for gameweek `n` once it has finished.
-- `predictions`: expected points for gameweek `n` (`xpts_raw` from the model, `availability`
-  from FPL news, `xpts` = their product, plus `ep_next` for comparison).
+- `predictions`: per player for gameweek `n`: `xpts` (what the optimiser maximises), `ep_next`,
+  `xpts_model`, `availability`, `fix_n`.
 
 Don't use `GAMEWEEK=<past>` to re-snapshot an old gameweek: it would store *today's* players
 data under that gameweek.
@@ -45,6 +45,15 @@ Past seasons (2022-23 onwards) are imported once from the community archive
 archive captured it after each gameweek's matches; gameweeks where
 the archive recorded all zeros are stored as null. Plan: Parquet in GCS stays the source of
 truth, with BigQuery external tables over it later (needs an infra PR).
+
+## Expected points
+
+By default `xpts` is FPL's own `ep_next`, used as is: it is `form x chance_of_playing / 100`
+and is already doubled in a double gameweek, so nothing is re-scaled (only a blank gameweek
+is forced to 0). It needs no history, model or training. Set `XPTS_SOURCE=model` to use the
+LightGBM model instead. Why the default is the simple option: the model looks better in the
+backtest, but on thin evidence, so it has to prove itself on snapshots we capture ourselves
+before switching (see below).
 
 ## Local development
 
@@ -77,13 +86,15 @@ seasons, tests walk-forward over 2025-26 and the current season). Summary:
 - The model **beats naive rolling-average baselines** on MAE, and on rank correlation for
   regular players (2025-26: Spearman 0.275 vs 0.171, MAE 2.31 vs 2.49).
 - It **beats FPL's pre-deadline `ep_next`** on the nine 2025-26 gameweeks where that is
-  available: regular players Spearman 0.30 vs 0.19, MAE 2.25 vs 2.68. FPL's own figure is a weak
-  predictor, mostly recent form.
-- Using `ep_next` as a model feature adds almost nothing (Spearman 0.303 vs 0.297), so it is
-  off by default (`USE_EP_NEXT=true` enables it).
+  available: regular players Spearman 0.30 vs 0.19, MAE 2.25 vs 2.67. `ep_next` is just
+  recent form scaled by availability, with no fixture awareness, which is a likely reason.
+- That is thin evidence (9 gameweeks, history from a third-party archive), so the default
+  stays `ep_next`. Re-run the backtest once ~8-10 gameweeks of our own pre-deadline
+  snapshots exist and switch to the model only if the edge holds.
+- Using `ep_next` as a model feature adds almost nothing (Spearman 0.306 vs 0.297).
 - Beware the archive's raw `xP`: it was captured *after* each gameweek and contains the
   outcome. The importer stores it against the following gameweek, and the backtest report
-  re-runs a leak audit every time. An earlier version of this README claimed FPL's `xP`
-  beat the model; that was this leak.
+  re-runs a leak audit every time. An earlier claim that FPL's `xP` beat the model was this
+  leak.
 
 `archive/` holds the original single-file optimiser, kept for reference only.

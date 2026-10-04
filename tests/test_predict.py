@@ -30,30 +30,78 @@ def test_availability_rules() -> None:
     assert avail.loc[5] == 0.0  # suspended overrides 100
 
 
-def test_dry_run_job_end_to_end(tmp_path) -> None:  # type: ignore[no-untyped-def]
-    settings = Settings(data_dir=str(tmp_path), dry_run=True)
+def _ingested(tmp_path, **kwargs) -> Settings:  # type: ignore[no-untyped-def]
+    settings = Settings(data_dir=str(tmp_path), dry_run=True, **kwargs)
     run_ingest(settings, DryRunSource())
-    gameweek = run_predict(settings)
-    out = read_parquet(settings, gw_path(SEASON, gameweek, "predictions"))
+    return settings
 
-    assert gameweek == 3
+
+def _predictions(settings: Settings, gameweek: int = 3) -> pd.DataFrame:
+    return read_parquet(settings, gw_path(SEASON, gameweek, "predictions"))
+
+
+def test_default_source_is_fpls_ep_next_used_as_is(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    assert Settings().xpts_source == "ep_next"
+    settings = _ingested(tmp_path)
+    assert run_predict(settings) == 3
+    out = _predictions(settings).set_index("id")
+
     assert len(out) == 8
-    assert out["xpts"].notna().all()
-    # Player 6 has 50% chance of playing; the model output is scaled accordingly.
-    p6 = out[out["id"] == 6].iloc[0]
-    assert p6["availability"] == 0.5
-    assert p6["xpts"] == pytest.approx(p6["xpts_raw"] * 0.5)
+    # FPL's figure already includes chance of playing: player 6 (50%) is NOT scaled again.
+    assert out.loc[6, "availability"] == 0.5
+    assert out.loc[6, "xpts"] == pytest.approx(out.loc[6, "ep_next"])
+    assert (out["xpts"] == out["ep_next"]).all()
+    assert out["xpts_model"].isna().all()
     # Dry runs stay out of the real data root.
     assert settings.data_root.endswith("dry_run")
 
 
+def test_ep_next_source_needs_no_history_or_live_data(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    settings = _ingested(tmp_path)
+    for gw in (1, 2):
+        (tmp_path / "dry_run" / f"season={SEASON}" / f"gw={gw}" / "live.parquet").unlink()
+
+    assert run_predict(settings) == 3  # nothing to train on, and it does not matter
+
+
+def test_ep_next_source_zeroes_a_blank_gameweek_and_keeps_doubles_as_given(  # type: ignore[no-untyped-def]
+    tmp_path,
+) -> None:
+    settings = _ingested(tmp_path)
+    fixtures = read_parquet(settings, gw_path(SEASON, 3, "fixtures"))
+    # Team 1 doubles up; team 4 has no fixture.
+    extra = fixtures.iloc[[0]].assign(id=99, team_h=1, team_a=2)
+    fixtures = pd.concat([fixtures, extra]).query("team_h != 3")
+    write_parquet(settings, fixtures, gw_path(SEASON, 3, "fixtures"))
+    run_predict(settings)
+    out = _predictions(settings).set_index("id")
+    players = read_parquet(settings, gw_path(SEASON, 3, "players")).set_index("id")
+
+    team1 = players.index[players["team"] == 1]
+    assert (out.loc[team1, "fix_n"] == 2).all()
+    assert (out.loc[team1, "xpts"] == out.loc[team1, "ep_next"]).all()  # not doubled again
+    blank = players.index[players["team"].isin([3, 4])]
+    assert (out.loc[blank, "fix_n"] == 0).all()
+    assert (out.loc[blank, "xpts"] == 0).all()
+
+
+def test_model_source_scales_by_availability(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    settings = _ingested(tmp_path, xpts_source="model")
+    run_predict(settings)
+    out = _predictions(settings).set_index("id")
+
+    assert out["xpts"].notna().all()
+    assert (out["xpts"] == out["xpts_model"]).all()
+    # The model knows nothing about injury news, so availability is applied on top.
+    assert out.loc[6, "availability"] == 0.5
+
+
 def test_ep_next_feature_is_off_by_default_and_switchable(tmp_path) -> None:  # type: ignore[no-untyped-def]
     assert Settings().use_ep_next is False
-    settings = Settings(data_dir=str(tmp_path), dry_run=True, use_ep_next=True)
-    run_ingest(settings, DryRunSource())
+    settings = _ingested(tmp_path, xpts_source="model", use_ep_next=True)
 
-    gameweek = run_predict(settings)
-    out = read_parquet(settings, gw_path(SEASON, gameweek, "predictions"))
+    run_predict(settings)
+    out = _predictions(settings)
     assert len(out) == 8 and out["xpts"].notna().all()
 
 
@@ -62,9 +110,8 @@ def test_dry_run_never_resolves_to_the_bucket() -> None:
     assert "real-bucket" not in settings.data_root
 
 
-def test_job_falls_back_to_ep_next_with_no_history(tmp_path) -> None:  # type: ignore[no-untyped-def]
-    settings = Settings(data_dir=str(tmp_path), dry_run=True)
-    run_ingest(settings, DryRunSource())
+def test_model_source_falls_back_to_ep_next_with_no_history(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    settings = _ingested(tmp_path, xpts_source="model")
     # Pretend it is gameweek 1: no earlier live data exists.
     for name in ("players", "teams", "fixtures"):
         write_parquet(
@@ -72,16 +119,17 @@ def test_job_falls_back_to_ep_next_with_no_history(tmp_path) -> None:  # type: i
             read_parquet(settings, gw_path(SEASON, 3, name)),
             gw_path(SEASON, 1, name),
         )
-    gameweek = run_predict(Settings(data_dir=str(tmp_path), dry_run=True, gameweek=1))
-    out = read_parquet(settings, gw_path(SEASON, gameweek, "predictions"))
+    gameweek = run_predict(
+        Settings(data_dir=str(tmp_path), dry_run=True, gameweek=1, xpts_source="model")
+    )
+    out = _predictions(settings, gameweek)
 
     # No fixtures in gameweek 1 of the dry-run fixture list, so blanks score zero.
     assert (out["xpts"] == 0).all()
 
 
-def test_predict_trains_on_earlier_seasons(tmp_path) -> None:  # type: ignore[no-untyped-def]
-    settings = Settings(data_dir=str(tmp_path), dry_run=True)
-    run_ingest(settings, DryRunSource())
+def test_model_source_trains_on_earlier_seasons(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    settings = _ingested(tmp_path, xpts_source="model")
     # Copy the season's data as an earlier season: it must be picked up as training history.
     for gw in (1, 2, 3):
         for name in ("live", "players", "teams", "fixtures"):
@@ -92,8 +140,7 @@ def test_predict_trains_on_earlier_seasons(tmp_path) -> None:  # type: ignore[no
             write_parquet(settings, df, gw_path("2024-25", gw, name))
 
     run_predict(settings)
-    out = read_parquet(settings, gw_path(SEASON, 3, "predictions"))
-    assert len(out) == 8
+    assert len(_predictions(settings)) == 8
 
 
 def _two_season_features(synthetic: dict[str, pd.DataFrame]) -> pd.DataFrame:

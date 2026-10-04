@@ -79,7 +79,9 @@ def expected_points_by_gameweek(merged: pd.DataFrame) -> pd.DataFrame:
     gameweek g+1, which matches the meaning of a live pre-deadline snapshot. Gameweek 1 has none.
     """
     df = merged.rename(columns={"element": "id", "GW": "gameweek"})
-    out = df.groupby(["id", "gameweek"])["xP"].sum(min_count=1).rename("ep_next").reset_index()
+    # In a double gameweek FPL repeats the same gameweek-level figure (already about double a
+    # single-fixture value) on each fixture row, so take it once rather than summing.
+    out = df.groupby(["id", "gameweek"])["xP"].mean().rename("ep_next").reset_index()
     # The archive records a gameweek it failed to capture as xP = 0 for every player (seen in
     # 2025-26). A real gameweek always has some positive xP, so all-zero means missing.
     captured = out.groupby("gameweek")["ep_next"].transform(lambda s: (s.fillna(0) > 0).any())

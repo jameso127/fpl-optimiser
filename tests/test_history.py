@@ -84,18 +84,18 @@ def test_xp_is_stored_against_the_next_gameweek_to_avoid_leaking_the_outcome(
     assert gw2.loc[2, "ep_next"] == 5.0  # the player's gameweek-1 xP, not gameweek 2's
 
 
-def test_double_gameweek_xp_is_summed_and_shifted() -> None:
+def test_double_gameweek_xp_is_taken_once_not_summed_and_is_shifted() -> None:
     merged = pd.DataFrame(
         {
             "element": [1, 1, 1],
             "GW": [1, 2, 2],
-            "xP": [2.0, 3.5, 1.5],  # gameweek 2 is a double gameweek
+            "xP": [2.0, 4.5, 4.5],  # gameweek 2 is a double: FPL repeats its figure on both rows
         }
     )
     ep = history.expected_points_by_gameweek(merged).set_index("gameweek")["ep_next"]
 
     assert ep.loc[2] == 2.0
-    assert ep.loc[3] == pytest.approx(5.0)
+    assert ep.loc[3] == pytest.approx(4.5)  # not 9.0
     assert 1 not in ep.index
 
 
