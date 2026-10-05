@@ -10,7 +10,7 @@ The infrastructure is in a separate repo, `fpl-optimiser-infra` (Terraform).
 ## How it works
 
 ```
-Scheduler (daily, 07:00 UK) -> Workflows -> Cloud Run jobs: ingest -> predict -> optimise -> notify
+Scheduler (daily, 10:00 UK) -> Workflows -> Cloud Run jobs: ingest -> predict -> optimise -> notify
 Scheduler (weekly)          -> Cloud Run job:                train
                                 |
               Cloud Storage: Parquet data, model registry, recommendations
@@ -26,10 +26,10 @@ Scheduler (weekly)          -> Cloud Run job:                train
 
 ## When messages are sent
 
-Daily at 07:00 UK time the workflow runs `ingest`, which also writes `schedule.json`. On a
-deadline day the workflow waits until 10:00 (or 2.5 hours before the deadline, if that is
-earlier), then reruns the jobs so the advice uses the latest injury news, and sends it. On
-other days it only refreshes the data and predictions. The timing rule is plain Python in
+Daily at 10:00 UK time the workflow runs `ingest` with `SCHEDULE_ONLY=true`, which only writes
+a small `schedule.json` saying whether the next deadline is today. On a deadline day the
+workflow runs the whole pipeline and sends the advice; on other days it stops there. A deadline
+before 10:00 is missed, which is accepted for now. The rule is plain Python in
 `ingest/schedule.py`, with tests, so the workflow only reads the answer.
 
 ## Decisions worth a look

@@ -96,10 +96,18 @@ def test_target_gameweek_falls_back_when_season_over() -> None:
     assert transform.target_gameweek(bootstrap) == 38
 
 
-def test_it_writes_the_plan_for_when_to_send_the_next_gameweek(tmp_path: Path) -> None:
+def test_it_writes_the_next_gameweek_and_whether_its_deadline_is_today(tmp_path: Path) -> None:
     settings = _settings(tmp_path)
     run(settings, FakeFplSource())
     plan = read_json(settings, "schedule.json")
 
     assert plan["gameweek"] == 3
-    assert plan["deadline"].startswith("2025-08-29") and "run_at" in plan
+    assert plan["deadline"].startswith("2025-08-29") and plan["deadline_day"] is False
+
+
+def test_schedule_only_writes_the_schedule_and_no_data(tmp_path: Path) -> None:
+    settings = _settings(tmp_path, schedule_only=True)
+    run(settings, FakeFplSource())
+
+    assert read_json(settings, "schedule.json")["gameweek"] == 3
+    assert available_seasons(settings) == []

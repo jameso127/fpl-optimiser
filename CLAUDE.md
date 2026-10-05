@@ -30,9 +30,9 @@ If I ask for a job/service that doesn't exist yet, say so rather than assuming i
 ## Architecture
 
 ```
-Scheduler (daily 07:00 UK) -> Workflows -> Cloud Run Jobs: ingest -> predict -> optimise -> notify
-   deadline day: ingest writes schedule.json; the workflow sleeps until send time, then runs
-   the jobs again with fresh data. Other days it only refreshes ingest and predict.
+Scheduler (daily 10:00 UK) -> Workflows -> Cloud Run Jobs: ingest -> predict -> optimise -> notify
+   first, ingest with SCHEDULE_ONLY=true writes schedule.json (is the deadline today?).
+   Not a deadline day: stop. Deadline day: run the four jobs.
 Scheduler (weekly) -> Cloud Run Job: train
                                    |
                            Cloud Storage (Parquet)

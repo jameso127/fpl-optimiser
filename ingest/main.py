@@ -4,7 +4,8 @@ For target gameweek n it writes a snapshot (players, teams, events, fixtures) to
 live per-player stats for every finished gameweek, backfilling any that are missing and
 always refreshing the most recent finished one. Re-running overwrites; it never appends.
 
-It also writes `schedule.json` (when the workflow should send this gameweek's messages).
+It also writes `schedule.json` (is the next deadline today?). With SCHEDULE_ONLY=true it writes
+only that and stops: the workflow runs it that way each morning to decide whether to continue.
 
 The players snapshot matters: it holds FPL's `ep_next` as of the deadline, which cannot be
 recovered later and is the baseline the predictions are backtested against.
@@ -28,6 +29,13 @@ def run(settings: Settings, source: FplSource) -> int:
     gameweek = settings.gameweek or transform.target_gameweek(bootstrap)
     log.info("ingest start", extra={"season": season, "gameweek": gameweek})
 
+    plan = schedule.plan(bootstrap["events"], dt.datetime.now(dt.UTC))
+    if plan is not None:
+        write_json(settings, plan.to_json(), "schedule.json")
+        log.info("schedule", extra=plan.to_json())
+    if settings.schedule_only:
+        return gameweek
+
     snapshot = {
         "players": transform.players_frame(bootstrap),
         "teams": transform.teams_frame(bootstrap),
@@ -46,11 +54,6 @@ def run(settings: Settings, source: FplSource) -> int:
         df = transform.live_frame(source.live(gw), gw)
         uri = write_parquet(settings, df, rel)
         log.info("wrote live stats", extra={"uri": uri, "rows": len(df), "live_gameweek": gw})
-
-    plan = schedule.plan(bootstrap["events"], dt.datetime.now(dt.UTC))
-    if plan is not None:
-        write_json(settings, plan.to_json(), "schedule.json")
-        log.info("schedule", extra=plan.to_json())
 
     log.info("ingest done", extra={"season": season, "gameweek": gameweek})
     return gameweek
