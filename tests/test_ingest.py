@@ -4,7 +4,14 @@ from typing import Any
 import pandas as pd
 
 from common.config import Settings
-from common.storage import available_gameweeks, available_seasons, exists, gw_path, read_parquet
+from common.storage import (
+    available_gameweeks,
+    available_seasons,
+    exists,
+    gw_path,
+    read_json,
+    read_parquet,
+)
 from ingest import transform
 from ingest.main import run
 from tests.fakes import FakeFplSource
@@ -87,3 +94,12 @@ def test_gameweek_override(tmp_path: Path) -> None:
 def test_target_gameweek_falls_back_when_season_over() -> None:
     bootstrap = {"events": [{"id": 37, "finished": True}, {"id": 38, "finished": True}]}
     assert transform.target_gameweek(bootstrap) == 38
+
+
+def test_it_writes_the_plan_for_when_to_send_the_next_gameweek(tmp_path: Path) -> None:
+    settings = _settings(tmp_path)
+    run(settings, FakeFplSource())
+    plan = read_json(settings, "schedule.json")
+
+    assert plan["gameweek"] == 3
+    assert plan["deadline"].startswith("2025-08-29") and "run_at" in plan

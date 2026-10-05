@@ -4,17 +4,20 @@ For target gameweek n it writes a snapshot (players, teams, events, fixtures) to
 live per-player stats for every finished gameweek, backfilling any that are missing and
 always refreshing the most recent finished one. Re-running overwrites; it never appends.
 
+It also writes `schedule.json` (when the workflow should send this gameweek's messages).
+
 The players snapshot matters: it holds FPL's `ep_next` as of the deadline, which cannot be
 recovered later and is the baseline the predictions are backtested against.
 """
 
+import datetime as dt
 import logging
 
 from common.config import Settings, get_settings
 from common.fpl_client import FplClient, FplSource
 from common.logging import configure_logging
-from common.storage import exists, gw_path, write_parquet
-from ingest import transform
+from common.storage import exists, gw_path, write_json, write_parquet
+from ingest import schedule, transform
 
 log = logging.getLogger(__name__)
 
@@ -43,6 +46,11 @@ def run(settings: Settings, source: FplSource) -> int:
         df = transform.live_frame(source.live(gw), gw)
         uri = write_parquet(settings, df, rel)
         log.info("wrote live stats", extra={"uri": uri, "rows": len(df), "live_gameweek": gw})
+
+    plan = schedule.plan(bootstrap["events"], dt.datetime.now(dt.UTC))
+    if plan is not None:
+        write_json(settings, plan.to_json(), "schedule.json")
+        log.info("schedule", extra=plan.to_json())
 
     log.info("ingest done", extra={"season": season, "gameweek": gameweek})
     return gameweek

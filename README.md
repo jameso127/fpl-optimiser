@@ -10,19 +10,27 @@ The infrastructure is in a separate repo, `fpl-optimiser-infra` (Terraform).
 ## How it works
 
 ```
-Scheduler -> Workflows -> Cloud Run jobs:  ingest -> predict -> optimise -> notify
-Scheduler -> Cloud Run job:                train   (weekly, separate from the above)
+Scheduler (daily, 07:00 UK) -> Workflows -> Cloud Run jobs: ingest -> predict -> optimise -> notify
+Scheduler (weekly)          -> Cloud Run job:                train
                                 |
               Cloud Storage: Parquet data, model registry, recommendations
 ```
 
 | Job | What it does |
 |---|---|
-| `ingest` | Saves a snapshot of the FPL API (players, teams, fixtures, live stats) as Parquet. |
+| `ingest` | Saves a snapshot of the FPL API (players, teams, fixtures, live stats) as Parquet, and plans when to send. |
 | `train` | Trains and evaluates a model, registers it, and only promotes it if it passes a gate. |
 | `predict` | Scores every player for the next gameweek with the promoted model. Never trains. |
 | `optimise` | For each user, finds the best team for 0 to N transfers, counting the points hit. |
 | `notify` | Sends each user their recommendation on Telegram, once per gameweek. |
+
+## When messages are sent
+
+Daily at 07:00 UK time the workflow runs `ingest`, which also writes `schedule.json`. On a
+deadline day the workflow waits until 10:00 (or 2.5 hours before the deadline, if that is
+earlier), then reruns the jobs so the advice uses the latest injury news, and sends it. On
+other days it only refreshes the data and predictions. The timing rule is plain Python in
+`ingest/schedule.py`, with tests, so the workflow only reads the answer.
 
 ## Decisions worth a look
 

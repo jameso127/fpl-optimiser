@@ -1,8 +1,8 @@
 # FPL Optimiser: Backend
 
 Python services for a demo project: pulls Fantasy Premier League (FPL) API data, predicts
-expected points per player, optimises squads and transfers, sends recommendations on Telegram, and
-serves an API for the React frontend.
+expected points per player, optimises squads and transfers, sends recommendations on Telegram. A
+frontend and API are deferred.
 
 **Hard constraint: must stay cheap (target < £2/month on GCP).** Prefer serverless,
 scale-to-zero. Never add an always-on resource.
@@ -10,7 +10,7 @@ scale-to-zero. Never add an always-on resource.
 ## Related repos
 
 - `fpl-optimiser-infra`: ALL GCP infrastructure (Terraform), Cloud Workflows, Scheduler, IAM.
-- `fpl-optimiser-web`: React frontend, consumes this repo's API.
+- `fpl-optimiser-web`: React frontend (deferred; there is no API service yet).
 
 This repo contains application code only. **Do not add Terraform or create GCP resources
 here.** If a change needs a new bucket, job, secret, IAM role or API enabled, stop and tell me
@@ -25,22 +25,21 @@ Provided to this repo as GitHub Actions variables / runtime env vars:
   (model registry) and `monitoring/season=<yyyy-yy>/...`
 - Cloud Run jobs (pre-created by infra): `fpl-ingest`, `fpl-train`, `fpl-predict`, `fpl-optimise`,
   `fpl-notify`
-- Cloud Run service (pre-created by infra): `fpl-api`
 If I ask for a job/service that doesn't exist yet, say so rather than assuming it does.
 
 ## Architecture
 
 ```
-Scheduler -> Workflows -> Cloud Run Jobs: ingest -> predict -> optimise -> notify
+Scheduler (daily 07:00 UK) -> Workflows -> Cloud Run Jobs: ingest -> predict -> optimise -> notify
+   deadline day: ingest writes schedule.json; the workflow sleeps until send time, then runs
+   the jobs again with fresh data. Other days it only refreshes ingest and predict.
+Scheduler (weekly) -> Cloud Run Job: train
                                    |
                            Cloud Storage (Parquet)
-                                   |
-web -> FastAPI (Cloud Run service) -> reads predictions, runs optimiser per user
 ```
 
 - Shared, expensive work runs once per gameweek (ingest + predict for all players).
-- Per-user work is cheap and on demand: the API fetches a squad by FPL team ID and runs only
-  the optimiser against precomputed predictions.
+- Per-user work (optimise, notify) is cheap and runs once per deadline day.
 - Storage is Parquet in GCS (no BigQuery unless asked). Users (chat id, FPL team id, settings,
   declared transfers, invites) are in Firestore behind a repository port, with an in-memory
   implementation for tests and single-user mode. Notifications go out over the Telegram Bot API.
@@ -54,7 +53,6 @@ web -> FastAPI (Cloud Run service) -> reads predictions, runs optimiser per user
 /predict    Cloud Run Job: serve the promoted model -> expected points (never trains)
 /optimise   Optimiser library + Cloud Run Job (squad, transfers, hit penalties)
 /notify     Cloud Run Job: format recommendations and send them on Telegram
-/api        FastAPI service (not built; the frontend is deferred)
 /common     Shared package (schemas, GCS I/O, config, logging)
 /docs       Architecture diagram, backtest results
 /.github    Workflows
@@ -72,9 +70,6 @@ web -> FastAPI (Cloud Run service) -> reads predictions, runs optimiser per user
 - Structured JSON logging (Cloud Logging friendly).
 - Jobs must be idempotent: re-running a gameweek overwrites that gameweek's outputs.
 - No dry-run mode (a decision, to keep the code simple): tests use fake sources in `tests/fakes.py`.
-- API: expose OpenAPI (`/openapi.json`), since the web repo generates types from it. Keep
-  response schemas stable; flag breaking changes to me. Enable CORS only for the frontend
-  origin (from env var). Return clear errors (404 unknown team ID, 429 rate limited).
 
 ## Data and modelling rules
 
@@ -82,7 +77,7 @@ web -> FastAPI (Cloud Run service) -> reads predictions, runs optimiser per user
   including if the model doesn't beat the baseline.
 - No data leakage: features for gameweek N use only data available before N's deadline.
 - Be a good API citizen: cache FPL responses, descriptive User-Agent, exponential backoff,
-  never hammer endpoints. Cache per-user squad lookups in the API.
+  never hammer endpoints.
 
 ## CI/CD (GitHub Actions) is the ONLY way things get deployed
 
