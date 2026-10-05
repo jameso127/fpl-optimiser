@@ -1,0 +1,116 @@
+name: deploy
+
+# On merge to main: build only the components whose files changed (changes to common/ or the
+# dependency files rebuild all), push images tagged with the git SHA (never `latest`), and
+# update the existing Cloud Run jobs to those images. Nothing is deployed from a laptop.
+#
+# Authentication is Workload Identity Federation (no keys). The deployer account can only be
+# assumed by this repository on the main branch (enforced in the infra repo).
+#
+# Repository variables, set by the infra repo's `scripts/set-github-variables.sh`:
+#   GCP_PROJECT_ID, GCP_REGION, GCP_WIF_PROVIDER, GCP_DEPLOYER_SA,
+#   ARTIFACT_REGISTRY_REPO, DATA_BUCKET
+# Optional: RUN_SMOKE_TEST=true runs the pipeline workflow as a dry run after deploying.
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+# Never run two deploys at once, and never cancel one halfway through.
+concurrency:
+  group: deploy
+  cancel-in-progress: false
+
+jobs:
+  plan:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.changed.outputs.matrix }}
+      any: ${{ steps.changed.outputs.any }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Which components changed?
+        id: changed
+        env:
+          BEFORE: ${{ github.event.before }}
+          SHA: ${{ github.sha }}
+        run: |
+          before="$BEFORE"
+          if [ -z "$before" ] || [ "$before" = "0000000000000000000000000000000000000000" ]; then
+            matrix="$(python3 scripts/changed_components.py --all)"
+          else
+            matrix="$(git diff --name-only "$before" "$SHA" | python3 scripts/changed_components.py)"
+          fi
+          echo "matrix=$matrix" >> "$GITHUB_OUTPUT"
+          if [ "$matrix" = '{"include": []}' ]; then echo "any=false" >> "$GITHUB_OUTPUT"; else echo "any=true" >> "$GITHUB_OUTPUT"; fi
+          echo "$matrix"
+
+  deploy:
+    needs: plan
+    if: needs.plan.outputs.any == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write # exchange the GitHub OIDC token for short-lived Google credentials
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
+    env:
+      IMAGE: ${{ vars.ARTIFACT_REGISTRY_REPO }}/${{ matrix.component }}:${{ github.sha }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.GCP_WIF_PROVIDER }}
+          service_account: ${{ vars.GCP_DEPLOYER_SA }}
+      - uses: google-github-actions/setup-gcloud@v2
+      - name: Let docker push to Artifact Registry
+        env:
+          REGION: ${{ vars.GCP_REGION }}
+        run: gcloud auth configure-docker "${REGION}-docker.pkg.dev" --quiet
+      - uses: docker/setup-buildx-action@v3
+      - name: Build and push ${{ matrix.component }}
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ${{ matrix.component }}/Dockerfile
+          push: true
+          tags: ${{ env.IMAGE }}
+          build-args: GIT_SHA=${{ github.sha }}
+          cache-from: type=gha,scope=${{ matrix.component }}
+          cache-to: type=gha,scope=${{ matrix.component }},mode=max
+      - name: Point fpl-${{ matrix.component }} at the new image
+        env:
+          COMPONENT: ${{ matrix.component }}
+          PROJECT: ${{ vars.GCP_PROJECT_ID }}
+          REGION: ${{ vars.GCP_REGION }}
+        run: |
+          gcloud run jobs update "fpl-${COMPONENT}" \
+            --project "$PROJECT" --region "$REGION" --image "$IMAGE"
+
+  smoke-test:
+    needs: deploy
+    if: needs.deploy.result == 'success' && vars.RUN_SMOKE_TEST == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.GCP_WIF_PROVIDER }}
+          service_account: ${{ vars.GCP_DEPLOYER_SA }}
+      - uses: google-github-actions/setup-gcloud@v2
+      - name: Run the pipeline end to end on fixture data
+        env:
+          PROJECT: ${{ vars.GCP_PROJECT_ID }}
+          REGION: ${{ vars.GCP_REGION }}
+        run: |
+          gcloud workflows run fpl-pipeline \
+            --project "$PROJECT" --location "$REGION" \
+            --data '{"dry_run": true}'
