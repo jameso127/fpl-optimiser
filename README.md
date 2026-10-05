@@ -7,21 +7,25 @@ Designed to stay under ~£2/month on GCP: serverless, scale-to-zero, no always-o
 ## Architecture
 
 ```
-Scheduler -> Workflows -> Cloud Run Jobs: ingest -> predict -> optimise -> notify
+Scheduler -> Workflows -> Cloud Run Jobs: ingest -> predict -> optimise -> notify   (each gameweek)
+             Scheduler -> Cloud Run Job:  train                                      (own schedule)
                                    |
-                           Cloud Storage (Parquet)
+                  Cloud Storage (Parquet data, model registry, monitoring)
                                    |
 web -> FastAPI (Cloud Run service) -> reads predictions, runs optimiser per user
 ```
 
-Shared, expensive work (ingest + predict) runs once per gameweek. Per-user work (fetch squad,
-optimise) is cheap and runs on demand.
+Shared work runs once per gameweek: ingest, then predict, which only *serves* the promoted
+model. Training is a separate job on its own schedule. Per-user work (fetch squad, optimise)
+is cheap and runs on demand.
 
 | Component | Status |
 |---|---|
 | `common/` config, logging, Parquet I/O, FPL client | done |
 | `ingest/` FPL API -> Parquet; `ingest.history` one-off import of past seasons | done |
-| `predict/` expected points (hurdle model by default; `ep_next` optional) + backtest | done |
+| `ml/` features, model, registry, promotion gate, monitoring, backtest | done |
+| `train/` train, evaluate, register and (if it passes the gate) promote a model | done |
+| `predict/` serve the promoted model (or `ep_next`) | done |
 | `optimise/`, `notify/`, `api/` | not started |
 | `.github/` CI and deploy | not started |
 
@@ -46,9 +50,36 @@ archive captured it after each gameweek's matches; gameweeks where
 the archive recorded all zeros are stored as null. Plan: Parquet in GCS stays the source of
 truth, with BigQuery external tables over it later (needs an infra PR).
 
+## Model lifecycle
+
+Training and serving are separate jobs with separate lifecycles:
+
+- **`train`** builds the training set from every stored season, runs a leak audit on the stored
+  `ep_next`, scores the last N finished gameweeks walk-forward (each by a model trained only on
+  earlier data), fits the final model, and writes it to `models/<name>/<version>/` with a
+  **model card** (data hash, features and dtypes, hyperparameters, seeds, library versions,
+  git SHA, holdout metrics). Versions are immutable.
+- **Promotion gate** (`ml/gate.py`): the new version only becomes `latest` if the leak audit is
+  clean, it beats the rolling-form baseline and FPL's `ep_next` on the holdout, and it is not
+  worse than the serving model on gameweeks out-of-sample for both. Every check, pass or fail,
+  is recorded in the card; a rejected model is kept for inspection but never served.
+- **`predict`** loads `latest`, builds features for the current gameweek only, **checks the
+  feature schema against the card** (it stops rather than score with misaligned columns), and
+  scores. It never trains, runs in seconds, and stamps `model_version` on every prediction. With
+  no promoted model it falls back to `ep_next` and says so.
+- **Monitoring** (`ml/monitor.py`, run by `train`): compares the predictions actually served
+  with results and with `ep_next`, gameweek by gameweek, into
+  `monitoring/season=<s>/live_performance.parquet`, and warns if the served model has lately
+  trailed FPL's own figure.
+- Reproducible: seeds and deterministic LightGBM, plus a data fingerprint, so the same data
+  retrains to the same predictions.
+
+Bucket layout additions: `models/<name>/<version>/...`, `models/<name>/latest.json` and
+`monitoring/season=<s>/...`, alongside `season=<s>/gw=<n>/...`.
+
 ## Expected points
 
-`XPTS_SOURCE=model` (default) uses our hurdle model: chance of playing x points if playing
+`XPTS_SOURCE=model` (default) serves the promoted hurdle model: chance of playing x points if playing
 (LightGBM), from player form and per-90 rates, team and opponent form, fixtures, rest days and
 last season's rates, scaled by FPL's injury news. `XPTS_SOURCE=ep_next` uses FPL's own figure
 instead: `form x chance_of_playing / 100`, already doubled in a double gameweek, so it is used
@@ -66,8 +97,9 @@ uv run pytest                             # make test
 DRY_RUN=true uv run python -m ingest.main # fixture data, no network (writes ./data/dry_run)
 uv run python -m ingest.main              # live FPL API -> ./data
 uv run python -m ingest.history           # one-off: past seasons -> ./data
-uv run python -m predict.main             # train + score the latest snapshot
-uv run python -m predict.backtest         # regenerate docs/backtest.md
+uv run python -m train.main               # train, evaluate, register, maybe promote a model
+uv run python -m predict.main             # score the latest snapshot with the promoted model
+uv run python -m ml.backtest              # regenerate docs/backtest.md (--no-ablation: lighter)
 ```
 
 Copy `.env.example` to `.env` for local settings. No secrets are committed.
@@ -92,7 +124,7 @@ measured for the rebuilt model, on the 9 gameweeks of 2025-26 with a clean pre-d
 
 The model's top-30 beat `ep_next`'s in 7 of 9 gameweeks. Small sample, so treat it as
 encouraging, not proven; the full 36-gameweek run and a feature-group ablation are still to
-come (`uv run python -m predict.backtest`, or `--no-ablation` for the lighter version).
+come (`uv run python -m ml.backtest`, or `--no-ablation` for the lighter version).
 
 - `ep_next` is just recent form scaled by availability, with no fixture awareness.
 - The archive's raw `xP` was captured *after* each gameweek and contains the outcome. The

@@ -59,14 +59,21 @@ class DryRunSource:
         return _bootstrap()
 
     def fixtures(self) -> list[dict[str, Any]]:
-        return [
-            {"id": 1, "event": 3, "team_h": 1, "team_a": 2, "team_h_difficulty": 2,
-             "team_a_difficulty": 4, "kickoff_time": "2025-08-30T14:00:00Z",
-             "finished": False, "team_h_score": None, "team_a_score": None},
-            {"id": 2, "event": 3, "team_h": 3, "team_a": 4, "team_h_difficulty": 3,
-             "team_a_difficulty": 3, "kickoff_time": "2025-08-30T16:30:00Z",
-             "finished": False, "team_h_score": None, "team_a_score": None},
-        ]  # fmt: skip
+        """Two matches a gameweek for gameweeks 1-3; 1 and 2 are finished with scores."""
+        rows = []
+        for event, day in ((1, "15"), (2, "22"), (3, "30")):
+            done = event < 3
+            for k, (home, away, score) in enumerate(((1, 2, (2, 0)), (3, 4, (1, 1)))):
+                rows.append(
+                    {
+                        "id": event * 10 + k, "event": event, "team_h": home, "team_a": away,
+                        "team_h_difficulty": 2 + k, "team_a_difficulty": 4 - k,
+                        "kickoff_time": f"2025-08-{day}T{14 + 2 * k}:00:00Z", "finished": done,
+                        "team_h_score": score[0] if done else None,
+                        "team_a_score": score[1] if done else None,
+                    }
+                )  # fmt: skip
+        return rows
 
     def live(self, gameweek: int) -> dict[str, Any]:
         return {

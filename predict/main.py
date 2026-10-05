@@ -1,15 +1,19 @@
-"""Predict job: stored data -> season=<s>/gw=<n>/predictions.parquet.
+"""Predict job (serving): stored data + the promoted model -> predictions.parquet.
 
-Columns: id, gameweek, xpts (what the optimiser uses), ep_next, xpts_model, availability, fix_n.
+Scores gameweek n with the model currently promoted in the registry. It never trains: the
+`train` job does that on its own schedule. Needs only the current season's live data (plus
+last season's rates), so it is quick and light.
+
+Columns: id, gameweek, xpts (what the optimiser uses), ep_next, xpts_model, availability,
+fix_n, model_version.
 
 `XPTS_SOURCE` picks `xpts`:
-- `model` (default): a hurdle model (chance of playing x points if playing, LightGBM) trained
-  on every earlier season plus this season's finished gameweeks, then scaled by FPL's injury
-  news. See the README and docs/backtest.md for how it compares with `ep_next`.
-- `ep_next`: FPL's own expected points from the players snapshot. Simple, needs no history or
-  model. FPL already folds chance-of-playing and double gameweeks into it (ep_next = form x
-  chance/100, doubled in a double gameweek), so it is used as is; only a blank gameweek is
-  forced to zero.
+- `model` (default): the promoted hurdle model (chance of playing x points if playing), scaled
+  by FPL's injury news. If no model has been promoted yet, falls back to `ep_next` and says
+  so in `model_version` and the logs instead of failing the pipeline.
+- `ep_next`: FPL's own expected points from the players snapshot. FPL already folds
+  chance-of-playing and double gameweeks into it (ep_next = form x chance/100, doubled in a
+  double gameweek), so it is used as is; only a blank gameweek is forced to zero.
 
 Re-running overwrites.
 """
@@ -30,42 +34,33 @@ from common.storage import (
 )
 from ingest.dry_run import DryRunSource
 from ingest.main import run as run_ingest
-from predict import features, model
-from predict.data import season_features
+from ml import features, model, registry
+from ml.data import season_features
 
 log = logging.getLogger(__name__)
 
+EP_NEXT_VERSION = "ep_next"
+FALLBACK_VERSION = "ep_next-fallback"
 
-def _model_xpts(settings: Settings, season: str, seasons: list[str], gameweek: int) -> pd.Series:
-    """Model expected points per player id, availability-adjusted, 0 for a blank gameweek."""
-    players = read_parquet(settings, gw_path(season, gameweek, "players"))
-    current = season_features(
-        settings, season, list(range(1, gameweek + 1)), snapshot_gw=gameweek, live_before=gameweek
+
+def _model_xpts(
+    settings: Settings, season: str, gameweek: int, players: pd.DataFrame
+) -> tuple[pd.Series, str] | None:
+    """(expected points per player id, model version) from the promoted model, or None."""
+    try:
+        hurdle, card = registry.load(settings, settings.model_name)
+    except FileNotFoundError:
+        return None
+    feats = season_features(
+        settings, season, [gameweek], snapshot_gw=gameweek, live_before=gameweek
     )
-    past = [
-        season_features(settings, s)
-        for s in seasons
-        if s < season and available_gameweeks(settings, s, "live")
-    ]
-    history = pd.concat([*past, current[current["gameweek"] < gameweek]], ignore_index=True)
-    train_rows = features.usable(history).dropna(subset=["target"])
-    to_score = current[current["gameweek"] == gameweek].reset_index(drop=True)
-
-    if train_rows.empty:
-        log.warning("no training data; falling back to ep_next")
-        ep = players.set_index("id")["ep_next"]
-        raw = to_score["id"].map(ep).fillna(0.0).to_numpy()
-        scale: float | pd.Series = 1.0  # ep_next already includes availability
-    else:
-        raw = model.expected_points(model.train_v2(train_rows), to_score)
-        # Injury news has no history to learn from, so it scales the chance of playing here.
-        scale = to_score["id"].map(model.availability(players))
-        log.info(
-            "trained",
-            extra={"train_rows": len(train_rows), "train_seasons": len(past), "season": season},
-        )
-    xpts = raw * scale * (to_score["fix_n"] >= 1)
-    return pd.Series(np.asarray(xpts, dtype=float), index=to_score["id"].to_numpy())
+    registry.check_schema(card, feats)
+    raw = model.expected_points(hurdle, feats)
+    # Injury news has no history to learn from, so it scales the chance of playing here.
+    scale = feats["id"].map(model.availability(players))
+    xpts = raw * scale * (feats["fix_n"] >= 1)
+    log.info("scored", extra={"model_version": card.version, "rows": len(feats)})
+    return pd.Series(np.asarray(xpts, dtype=float), index=feats["id"].to_numpy()), card.version
 
 
 def run(settings: Settings) -> int:
@@ -98,16 +93,27 @@ def run(settings: Settings) -> int:
     out["fix_n"] = players["team"].map(fix_n).fillna(0).astype(int).to_numpy()
     out["availability"] = out["id"].map(model.availability(players))
     out["xpts_model"] = np.nan
+    # ep_next already reflects chance of playing and double gameweeks. A blank gameweek has
+    # no fixture, so nothing to score.
+    out["xpts"] = out["ep_next"].fillna(0.0) * (out["fix_n"] >= 1)
+
+    version = EP_NEXT_VERSION
     if settings.xpts_source == "model":
-        out["xpts_model"] = out["id"].map(_model_xpts(settings, season, seasons, gameweek))
-        out["xpts"] = out["xpts_model"]
-    else:
-        # ep_next already reflects chance of playing and double gameweeks. A blank gameweek
-        # has no fixture, so nothing to score.
-        out["xpts"] = out["ep_next"].fillna(0.0) * (out["fix_n"] >= 1)
+        scored = _model_xpts(settings, season, gameweek, players)
+        if scored is None:
+            version = FALLBACK_VERSION
+            log.warning(
+                "no promoted model; using ep_next. Run the train job.",
+                extra={"model_name": settings.model_name},
+            )
+        else:
+            xpts_model, version = scored
+            out["xpts_model"] = out["id"].map(xpts_model)
+            out["xpts"] = out["xpts_model"]
+    out["model_version"] = version
 
     uri = write_parquet(settings, out, gw_path(season, gameweek, "predictions"))
-    log.info("predict done", extra={"uri": uri, "rows": len(out)})
+    log.info("predict done", extra={"uri": uri, "rows": len(out), "model_version": version})
     return gameweek
 
 

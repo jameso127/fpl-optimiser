@@ -1,5 +1,5 @@
 # Build with the repo root (fpl-backend/) as context:
-#   docker build -f predict/Dockerfile .
+#   docker build -f train/Dockerfile --build-arg GIT_SHA=$(git rev-parse HEAD) .
 FROM python:3.12-slim
 
 # LightGBM needs the OpenMP runtime.
@@ -17,6 +17,10 @@ RUN uv sync --frozen --no-dev --group predict --no-install-project
 COPY common ./common
 COPY ingest ./ingest
 COPY ml ./ml
-COPY predict ./predict
+COPY train ./train
 
-CMD ["uv", "run", "--no-sync", "python", "-m", "predict.main"]
+# Stamped on every model card so a model can be traced to the code that trained it.
+ARG GIT_SHA=unknown
+ENV GIT_SHA=$GIT_SHA
+
+CMD ["uv", "run", "--no-sync", "python", "-m", "train.main"]

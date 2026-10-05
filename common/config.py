@@ -15,6 +15,11 @@ class Settings(BaseSettings):
     # Where `xpts` (what the optimiser maximises) comes from: our model, or FPL's own `ep_next`.
     xpts_source: Literal["ep_next", "model"] = "model"
 
+    # Model lifecycle: train once (job `train`), serve many times (job `predict`).
+    model_name: str = "xpts-hurdle"
+    holdout_gameweeks: int = 8  # recent finished gameweeks used to evaluate a new model
+    git_sha: str | None = None  # stamped on model cards; set by CI/the image build
+
     fpl_base_url: str = "https://fantasy.premierleague.com/api"
     fpl_user_agent: str = "fpl-optimiser-demo/0.1"
     fpl_min_interval_seconds: float = 0.5

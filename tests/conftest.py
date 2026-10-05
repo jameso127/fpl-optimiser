@@ -69,3 +69,20 @@ def synthetic() -> dict[str, pd.DataFrame]:
         ]
     )
     return {"players": players, "live": live, "teams": teams, "fixtures": fixtures, "ep": ep}
+
+
+@pytest.fixture
+def labelled(synthetic: dict[str, pd.DataFrame]) -> pd.DataFrame:
+    """Labelled feature rows for two synthetic seasons, as the train job would build them."""
+    from ml import features
+
+    frames = []
+    for season in ("2024-25", "2025-26"):
+        f = features.build_features(
+            synthetic["live"], synthetic["players"], synthetic["teams"], synthetic["fixtures"],
+            list(range(1, 9)), synthetic["ep"],
+        )  # fmt: skip
+        f.insert(0, "season", season)
+        f["dc_era"] = float(season >= features.DC_FIRST_SEASON)
+        frames.append(f)
+    return features.usable(pd.concat(frames, ignore_index=True)).dropna(subset=["target"])

@@ -139,7 +139,7 @@ def test_managers_are_dropped_from_players_and_live(tmp_path) -> None:  # type: 
 
 
 def test_load_ep_next_reads_each_snapshot_for_its_own_gameweek(tmp_path) -> None:  # type: ignore[no-untyped-def]
-    from predict.data import load_ep_next
+    from ml.data import load_ep_next
 
     settings = Settings(data_dir=str(tmp_path))
     history.import_season(settings, "2024-25", _fetch)

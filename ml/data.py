@@ -8,7 +8,7 @@ import pandas as pd
 
 from common.config import Settings
 from common.storage import available_gameweeks, available_seasons, gw_path, read_parquet
-from predict import features
+from ml import features
 
 
 def load_live(settings: Settings, season: str, before: int | None = None) -> pd.DataFrame:
@@ -77,3 +77,11 @@ def season_features(
     feats.insert(0, "season", season)
     feats["dc_era"] = float(season >= features.DC_FIRST_SEASON)
     return feats
+
+
+def all_season_features(settings: Settings) -> pd.DataFrame:
+    """Feature rows for every stored season that has live data (the training universe)."""
+    seasons = [s for s in available_seasons(settings) if available_gameweeks(settings, s, "live")]
+    if not seasons:
+        raise RuntimeError("no live data found; run ingest (and ingest.history) first")
+    return pd.concat([season_features(settings, s) for s in seasons], ignore_index=True)

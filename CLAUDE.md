@@ -21,8 +21,10 @@ it needs an infra PR first.
 Provided to this repo as GitHub Actions variables / runtime env vars:
 - `GCP_PROJECT_ID`, `GCP_REGION`, `GCP_WIF_PROVIDER`, `GCP_DEPLOYER_SA`
 - `ARTIFACT_REGISTRY_REPO` (image repo path)
-- `DATA_BUCKET` (GCS bucket for Parquet data), layout: `gs://$DATA_BUCKET/season=<yyyy-yy>/gw=<n>/...`
-- Cloud Run jobs (pre-created by infra): `fpl-ingest`, `fpl-predict`, `fpl-optimise`, `fpl-notify`
+- `DATA_BUCKET` (GCS bucket for Parquet data), layout: `gs://$DATA_BUCKET/season=<yyyy-yy>/gw=<n>/...`, plus `models/<name>/<version>/...`
+  (model registry) and `monitoring/season=<yyyy-yy>/...`
+- Cloud Run jobs (pre-created by infra): `fpl-ingest`, `fpl-train`, `fpl-predict`, `fpl-optimise`,
+  `fpl-notify`
 - Cloud Run service (pre-created by infra): `fpl-api`
 If I ask for a job/service that doesn't exist yet, say so rather than assuming it does.
 
@@ -46,7 +48,9 @@ web -> FastAPI (Cloud Run service) -> reads predictions, runs optimiser per user
 
 ```
 /ingest     Cloud Run Job: FPL API -> Parquet
-/predict    Cloud Run Job: features + model -> expected points
+/ml         Shared ML library: features, model, registry, promotion gate, monitoring, backtest
+/train      Cloud Run Job: train, evaluate, register and maybe promote a model (own schedule)
+/predict    Cloud Run Job: serve the promoted model -> expected points (never trains)
 /optimise   Optimiser library + Cloud Run Job (squad, transfers, hit penalties)
 /notify     Cloud Run Job: build and send the email
 /api        FastAPI service

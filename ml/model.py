@@ -6,7 +6,7 @@ import lightgbm as lgb
 import numpy as np
 import pandas as pd
 
-from predict.features import FEATURES, FEATURES_V2
+from ml.features import FEATURES, FEATURES_V2
 
 PARAMS = {
     "objective": "regression",

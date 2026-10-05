@@ -3,7 +3,9 @@
 Layout: season=<yyyy-yy>/gw=<n>/<name>.parquet
 """
 
+import json
 import re
+from typing import Any
 
 import fsspec
 import pandas as pd
@@ -48,6 +50,47 @@ def available_gameweeks(settings: Settings, season: str, name: str) -> list[int]
     fs, root = fsspec.core.url_to_fs(settings.data_root.rstrip("/"))
     found = fs.glob(f"{root}/season={season}/gw=*/{name}.parquet")
     return sorted(int(m.group(1)) for p in found if (m := re.search(r"gw=(\d+)", p)))
+
+
+def write_bytes(settings: Settings, data: bytes, rel_path: str) -> str:
+    uri = _uri(settings, rel_path)
+    fs, path = fsspec.core.url_to_fs(uri)
+    fs.makedirs(fs._parent(path), exist_ok=True)
+    with fs.open(path, "wb") as f:
+        f.write(data)
+    return uri
+
+
+def read_bytes(settings: Settings, rel_path: str) -> bytes:
+    fs, path = fsspec.core.url_to_fs(_uri(settings, rel_path))
+    with fs.open(path, "rb") as f:
+        data: bytes = f.read()
+    return data
+
+
+def _json_default(o: Any) -> Any:
+    if hasattr(o, "item"):  # numpy scalars
+        return o.item()
+    raise TypeError(f"not JSON serialisable: {type(o).__name__}")
+
+
+def write_json(settings: Settings, obj: Any, rel_path: str) -> str:
+    body = json.dumps(obj, indent=2, sort_keys=True, default=_json_default)
+    return write_bytes(settings, body.encode(), rel_path)
+
+
+def read_json(settings: Settings, rel_path: str) -> Any:
+    return json.loads(read_bytes(settings, rel_path))
+
+
+def list_subdirs(settings: Settings, rel_dir: str) -> list[str]:
+    """Names of the immediate subdirectories of `rel_dir` (empty if it does not exist)."""
+    fs, path = fsspec.core.url_to_fs(_uri(settings, rel_dir.rstrip("/")))
+    if not fs.exists(path):
+        return []
+    return sorted(
+        p.rstrip("/").rsplit("/", 1)[-1] for p in fs.ls(path, detail=False) if fs.isdir(p)
+    )
 
 
 def exists(settings: Settings, rel_path: str) -> bool:

@@ -1,6 +1,6 @@
 > **Out of date.** This report was generated before the model rebuild (hurdle model, team
 > form, rest days, last-season rates). The full re-run was interrupted by low memory; regenerate
-> with `uv run python -m predict.backtest`. Interim head-to-head numbers are in the README.
+> with `uv run python -m ml.backtest`. Interim head-to-head numbers are in the README.
 
 # Backtest results
 

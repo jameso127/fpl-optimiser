@@ -6,8 +6,8 @@ Compared against naive baselines and FPL's expected points (`ep_next`). For past
 ingest/history.py; the raw column leaks the outcome). For the current season it is only known
 where ingest stored a pre-deadline snapshot. The report says which gameweeks have it.
 
-    uv run python -m predict.backtest              # last two seasons -> docs/backtest.md
-    uv run python -m predict.backtest 2025-26
+    uv run python -m ml.backtest              # last two seasons -> docs/backtest.md
+    uv run python -m ml.backtest 2025-26
 """
 
 import argparse
@@ -19,8 +19,8 @@ import pandas as pd
 
 from common.config import Settings, get_settings
 from common.storage import available_gameweeks, available_seasons, gw_path, read_parquet
-from predict import features, model
-from predict.data import season_features
+from ml import features, model
+from ml.data import season_features
 
 FIRST_TEST_GW = 3  # gameweeks 1-2 have almost no in-season form to use
 REGULAR_MINUTES = 60  # "regular" = averaged >= 60 minutes over the previous 5 gameweeks
@@ -31,32 +31,40 @@ METHODS = [*CORE_METHODS, "ep_next"]
 TOP_K = 30  # picks per gameweek for the decision-oriented metric
 
 
-def walk_forward(feats: pd.DataFrame, test_seasons: list[str]) -> pd.DataFrame:
+def walk_forward(
+    feats: pd.DataFrame,
+    test_seasons: list[str],
+    only_gameweeks: set[int] | None = None,
+    with_v1: bool = True,
+) -> pd.DataFrame:
+    """Score each test gameweek with a model trained only on data from before it.
+
+    `only_gameweeks` limits which gameweeks of each test season are scored (the train job's
+    recent holdout); `with_v1=False` skips the first model, which only the report needs.
+    """
     labelled = features.usable(feats).dropna(subset=["target"])
     parts = []
     for ts in test_seasons:
         earlier = labelled[labelled["season"] < ts]
         in_season = labelled[labelled["season"] == ts]
         for g in sorted(in_season["gameweek"].unique()):
-            if g < FIRST_TEST_GW:
+            if g < FIRST_TEST_GW or (only_gameweeks is not None and g not in only_gameweeks):
                 continue
             train = pd.concat([earlier, in_season[in_season["gameweek"] < g]])
             test = in_season[in_season["gameweek"] == g]
             if train.empty or test.empty:
                 continue
-            v1 = model.train(train, train["target"], features.FEATURES)
-            v2 = model.train_v2(train)
-            parts.append(
-                test.assign(
-                    model=model.expected_points(v2, test),
-                    model_v1=model.predict(v1, test),
-                    baseline_l5=test["pts_l5"].fillna(0.0),
-                    baseline_season=test["pts_season"].fillna(0.0),
-                )[
-                    ["season", "id", "gameweek", "target", "min_l5"]
-                    + ["model", "model_v1", "baseline_l5", "baseline_season"]
-                ]
+            scored = test.assign(
+                model=model.expected_points(model.train_v2(train), test),
+                baseline_l5=test["pts_l5"].fillna(0.0),
+                baseline_season=test["pts_season"].fillna(0.0),
             )
+            keep = ["season", "id", "gameweek", "target", "min_l5", "model"]
+            if with_v1:
+                v1 = model.train(train, train["target"], features.FEATURES)
+                scored["model_v1"] = model.predict(v1, test)
+                keep.append("model_v1")
+            parts.append(scored[[*keep, "baseline_l5", "baseline_season"]])
     return pd.concat(parts, ignore_index=True) if parts else pd.DataFrame()
 
 

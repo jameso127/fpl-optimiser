@@ -1,7 +1,7 @@
 import pandas as pd
 import pytest
 
-from predict import features
+from ml import features
 
 
 def _build(
