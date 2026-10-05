@@ -1,5 +1,7 @@
 import json
 from collections import Counter
+from pathlib import Path
+from typing import Any
 
 import httpx
 import pytest
@@ -11,17 +13,17 @@ from optimise.main import build_pool, run
 from tests import fakes
 
 
-def _settings(tmp_path, **kwargs) -> Settings:  # type: ignore[no-untyped-def]
+def _settings(tmp_path: Path, **kwargs: Any) -> Settings:
     return Settings(data_dir=str(tmp_path), season=fakes.SEASON, **kwargs)
 
 
-def _run(tmp_path, **kwargs):  # type: ignore[no-untyped-def]
+def _run(tmp_path: Path, **kwargs: Any) -> tuple[Settings, fakes.World, dict[str, Any]]:
     settings = _settings(tmp_path, **kwargs)
     world = fakes.seed_storage(settings)
     return settings, world, run(settings, fakes.FakeEntrySource(world), fakes.TEAM_ID)
 
 
-def test_writes_a_recommendation_for_every_number_of_transfers(tmp_path) -> None:  # type: ignore[no-untyped-def]
+def test_writes_a_recommendation_for_every_number_of_transfers(tmp_path: Path) -> None:
     settings, _, rec = _run(tmp_path, max_transfers=3)
     stored = read_json(settings, recommendation_path(fakes.SEASON, fakes.GAMEWEEK, fakes.TEAM_ID))
 
@@ -32,7 +34,7 @@ def test_writes_a_recommendation_for_every_number_of_transfers(tmp_path) -> None
     assert stored["model_version"] == "test-model"
 
 
-def test_every_option_is_a_legal_team(tmp_path) -> None:  # type: ignore[no-untyped-def]
+def test_every_option_is_a_legal_team(tmp_path: Path) -> None:
     _, _, rec = _run(tmp_path, max_transfers=4)
 
     for option in rec["options"]:
@@ -50,7 +52,7 @@ def test_every_option_is_a_legal_team(tmp_path) -> None:  # type: ignore[no-unty
         assert option["bank_after"] >= 0
 
 
-def test_gain_is_measured_against_holding_and_hits_are_charged(tmp_path) -> None:  # type: ignore[no-untyped-def]
+def test_gain_is_measured_against_holding_and_hits_are_charged(tmp_path: Path) -> None:
     _, _, rec = _run(tmp_path, max_transfers=3)
     hold = rec["options"][0]
 
@@ -63,7 +65,7 @@ def test_gain_is_measured_against_holding_and_hits_are_charged(tmp_path) -> None
         assert option["hit_cost"] == 4.0 * max(0, option["transfers"] - rec["free_transfers"])
 
 
-def test_selling_prices_come_from_the_purchase_history(tmp_path) -> None:  # type: ignore[no-untyped-def]
+def test_selling_prices_come_from_the_purchase_history(tmp_path: Path) -> None:
     _, world, rec = _run(tmp_path)
     market = sum(world.purchase.values())
     # One player was bought 0.6m cheaper than he is now, so only half of that gain is ours.
@@ -71,7 +73,7 @@ def test_selling_prices_come_from_the_purchase_history(tmp_path) -> None:  # typ
     assert rec["bank"] == world.bank / 10
 
 
-def test_rerunning_overwrites_with_the_same_answer(tmp_path) -> None:  # type: ignore[no-untyped-def]
+def test_rerunning_overwrites_with_the_same_answer(tmp_path: Path) -> None:
     settings, world, first = _run(tmp_path)
     second = run(settings, fakes.FakeEntrySource(world), fakes.TEAM_ID)
 
@@ -79,7 +81,7 @@ def test_rerunning_overwrites_with_the_same_answer(tmp_path) -> None:  # type: i
     assert first["recommended_transfers"] == second["recommended_transfers"]
 
 
-def test_a_missing_team_id_or_predictions_is_a_clear_error(tmp_path) -> None:  # type: ignore[no-untyped-def]
+def test_a_missing_team_id_or_predictions_is_a_clear_error(tmp_path: Path) -> None:
     settings = _settings(tmp_path)
     world = fakes.synthetic_world()
     with pytest.raises(RuntimeError, match="FPL_TEAM_ID"):
@@ -123,7 +125,7 @@ def test_the_client_exposes_the_per_manager_endpoints() -> None:
     ]  # fmt: skip
 
 
-def test_declared_transfers_change_the_squad_the_advice_starts_from(tmp_path) -> None:  # type: ignore[no-untyped-def]
+def test_declared_transfers_change_the_squad_the_advice_starts_from(tmp_path: Path) -> None:
     import datetime as dt
 
     from common.users.models import DeclaredTransfer
@@ -157,7 +159,7 @@ def test_declared_transfers_change_the_squad_the_advice_starts_from(tmp_path) ->
     assert rec["options"][1]["hit_cost"] == 4.0  # any further transfer is now a hit
 
 
-def test_the_assumptions_always_say_what_the_squad_is_based_on(tmp_path) -> None:  # type: ignore[no-untyped-def]
+def test_the_assumptions_always_say_what_the_squad_is_based_on(tmp_path: Path) -> None:
     _, _, rec = _run(tmp_path)
 
     assert rec["assumptions"][0].startswith(
@@ -166,8 +168,8 @@ def test_the_assumptions_always_say_what_the_squad_is_based_on(tmp_path) -> None
     assert any(line.startswith("Free transfers left: 1 (estimated)") for line in rec["assumptions"])
 
 
-def test_the_job_optimises_every_user_and_one_failure_does_not_stop_the_rest(  # type: ignore[no-untyped-def]
-    tmp_path, monkeypatch
+def test_the_job_optimises_every_user_and_one_failure_does_not_stop_the_rest(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     import optimise.main as job
     from common.storage import exists
@@ -177,7 +179,7 @@ def test_the_job_optimises_every_user_and_one_failure_does_not_stop_the_rest(  #
     world = fakes.seed_storage(settings)
 
     class Source(fakes.FakeEntrySource):
-        def entry_history(self, team_id: int):  # type: ignore[no-untyped-def]
+        def entry_history(self, team_id: int) -> dict[str, Any]:
             if team_id == 2:
                 raise RuntimeError("FPL is down for this team")
             return super().entry_history(team_id)

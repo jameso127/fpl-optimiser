@@ -54,7 +54,7 @@ web -> FastAPI (Cloud Run service) -> reads predictions, runs optimiser per user
 /predict    Cloud Run Job: serve the promoted model -> expected points (never trains)
 /optimise   Optimiser library + Cloud Run Job (squad, transfers, hit penalties)
 /notify     Cloud Run Job: format recommendations and send them on Telegram
-/api        FastAPI service
+/api        FastAPI service (not built; the frontend is deferred)
 /common     Shared package (schemas, GCS I/O, config, logging)
 /docs       Architecture diagram, backtest results
 /.github    Workflows
@@ -110,7 +110,6 @@ make setup      # install deps
 make lint       # ruff + mypy
 make test       # pytest
 make pipeline   # ingest -> predict -> optimise locally against ./data
-make api        # run FastAPI locally
 ```
 (TODO: keep in sync with the Makefile.)
 

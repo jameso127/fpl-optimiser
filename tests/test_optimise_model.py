@@ -5,10 +5,12 @@ import pytest
 
 from optimise import model
 from optimise.model import Player, Problem, Solution
-from tests.fakes import synthetic_world
+from tests.fakes import World, synthetic_world
 
 
-def _problem(seed: int = 7, free_transfers: int = 1, bank: int | None = None, w: float = 0.1):  # type: ignore[no-untyped-def]
+def _problem(
+    seed: int = 7, free_transfers: int = 1, bank: int | None = None, w: float = 0.1
+) -> tuple[Problem, World]:
     world = synthetic_world(seed)
     pool = tuple(
         Player(

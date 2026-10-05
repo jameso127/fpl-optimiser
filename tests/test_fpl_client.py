@@ -1,3 +1,6 @@
+from collections.abc import Callable
+from typing import Any
+
 import httpx
 import pytest
 
@@ -5,7 +8,7 @@ from common.config import Settings
 from common.fpl_client import FplClient
 
 
-def _client(handler, **kwargs) -> FplClient:  # type: ignore[no-untyped-def]
+def _client(handler: Callable[[httpx.Request], httpx.Response], **kwargs: Any) -> FplClient:
     settings = Settings(fpl_min_interval_seconds=0)
     http = httpx.Client(transport=httpx.MockTransport(handler))
     return FplClient(settings, client=http, backoff_base=0.0, **kwargs)

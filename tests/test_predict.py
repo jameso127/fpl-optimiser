@@ -1,3 +1,6 @@
+from pathlib import Path
+from typing import Any
+
 import numpy as np
 import pandas as pd
 import pytest
@@ -32,7 +35,7 @@ def test_availability_rules() -> None:
     assert avail.loc[5] == 0.0  # suspended overrides 100
 
 
-def _ingested(tmp_path) -> Settings:  # type: ignore[no-untyped-def]
+def _ingested(tmp_path: Path) -> Settings:
     settings = Settings(data_dir=str(tmp_path))
     run_ingest(settings, FakeFplSource())
     return settings
@@ -42,14 +45,14 @@ def _predictions(settings: Settings, gameweek: int = 3) -> pd.DataFrame:
     return read_parquet(settings, gw_path(SEASON, gameweek, "predictions"))
 
 
-def test_predict_serves_the_promoted_model_and_never_trains(  # type: ignore[no-untyped-def]
-    tmp_path, monkeypatch, gate_passes
+def test_predict_serves_the_promoted_model_and_never_trains(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, gate_passes: None
 ) -> None:
     settings = _ingested(tmp_path)
     card = train_run(settings)
     assert card.gate is not None and card.gate.promoted
 
-    def refuse(*args, **kwargs):  # type: ignore[no-untyped-def]
+    def refuse(*args: Any, **kwargs: Any) -> None:
         raise AssertionError("the predict job must not train")
 
     monkeypatch.setattr(model, "train_hurdle", refuse)
@@ -64,8 +67,8 @@ def test_predict_serves_the_promoted_model_and_never_trains(  # type: ignore[no-
     assert out["ep_next"].notna().all() and not (out["xpts"] == out["ep_next"]).all()
 
 
-def test_predict_fails_with_a_clear_message_when_no_model_is_promoted(  # type: ignore[no-untyped-def]
-    tmp_path,
+def test_predict_fails_with_a_clear_message_when_no_model_is_promoted(
+    tmp_path: Path,
 ) -> None:
     settings = _ingested(tmp_path)
 
@@ -80,8 +83,8 @@ def read_parquet_exists(settings: Settings) -> bool:
     return exists(settings, gw_path(SEASON, 3, "predictions"))
 
 
-def test_predict_scales_the_chance_of_playing_by_injury_news(  # type: ignore[no-untyped-def]
-    tmp_path, gate_passes
+def test_predict_scales_the_chance_of_playing_by_injury_news(
+    tmp_path: Path, gate_passes: None
 ) -> None:
     settings = _ingested(tmp_path)
     train_run(settings)
@@ -98,8 +101,8 @@ def test_predict_scales_the_chance_of_playing_by_injury_news(  # type: ignore[no
     assert half == pytest.approx(full * 0.5)
 
 
-def test_predict_gives_a_player_with_no_fixture_zero_points(  # type: ignore[no-untyped-def]
-    tmp_path, gate_passes
+def test_predict_gives_a_player_with_no_fixture_zero_points(
+    tmp_path: Path, gate_passes: None
 ) -> None:
     settings = _ingested(tmp_path)
     train_run(settings)
@@ -119,8 +122,8 @@ def test_predict_gives_a_player_with_no_fixture_zero_points(  # type: ignore[no-
     assert (out.loc[teams.index[teams.isin([1, 2])], "xpts"] > 0).all()
 
 
-def test_serving_stops_if_the_features_no_longer_match_the_model(  # type: ignore[no-untyped-def]
-    tmp_path, gate_passes
+def test_serving_stops_if_the_features_no_longer_match_the_model(
+    tmp_path: Path, gate_passes: None
 ) -> None:
     settings = _ingested(tmp_path)
     card = train_run(settings)
@@ -150,11 +153,11 @@ def test_walk_forward_never_trains_on_the_test_gameweek_or_later(
     seen: list[pd.DataFrame] = []
     real_v1, real_v2 = backtest.model.train, backtest.model.train_v2
 
-    def spy_v1(x: pd.DataFrame, y: pd.Series, columns: list[str] | None = None):  # type: ignore[no-untyped-def]
+    def spy_v1(x: pd.DataFrame, y: pd.Series, columns: list[str] | None = None) -> Any:
         seen.append(x)
         return real_v1(x, y, columns)
 
-    def spy_v2(x: pd.DataFrame, columns: list[str] | None = None):  # type: ignore[no-untyped-def]
+    def spy_v2(x: pd.DataFrame, columns: list[str] | None = None) -> Any:
         seen.append(x)
         return real_v2(x, columns)
 

@@ -1,5 +1,6 @@
 import datetime as dt
 import json
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
@@ -8,13 +9,17 @@ import pytest
 from common.config import Settings
 from common.storage import read_json
 from ml import features, model, registry
+from ml.model import Hurdle
+from ml.registry import ModelCard
 
 
-def _settings(tmp_path) -> Settings:  # type: ignore[no-untyped-def]
+def _settings(tmp_path: Path) -> Settings:
     return Settings(data_dir=str(tmp_path), git_sha="abc1234def")
 
 
-def _trained(labelled: pd.DataFrame, settings: Settings, version: str = "v1"):  # type: ignore[no-untyped-def]
+def _trained(
+    labelled: pd.DataFrame, settings: Settings, version: str = "v1"
+) -> tuple[Hurdle, ModelCard]:
     hurdle = model.train_v2(labelled)
     card = registry.build_card(settings, version, labelled, hurdle, metrics={"holdout": {"x": 1}})
     return hurdle, card
@@ -28,7 +33,9 @@ def test_version_names_sort_chronologically_and_carry_the_git_sha() -> None:
     assert early < late
 
 
-def test_saved_model_scores_identically_after_loading(labelled, tmp_path) -> None:  # type: ignore[no-untyped-def]
+def test_saved_model_scores_identically_after_loading(
+    labelled: pd.DataFrame, tmp_path: Path
+) -> None:
     settings = _settings(tmp_path)
     hurdle, card = _trained(labelled, settings)
     registry.save(settings, hurdle, card)
@@ -41,7 +48,7 @@ def test_saved_model_scores_identically_after_loading(labelled, tmp_path) -> Non
     assert loaded_card == card
 
 
-def test_versions_are_immutable(labelled, tmp_path) -> None:  # type: ignore[no-untyped-def]
+def test_versions_are_immutable(labelled: pd.DataFrame, tmp_path: Path) -> None:
     settings = _settings(tmp_path)
     hurdle, card = _trained(labelled, settings)
     registry.save(settings, hurdle, card)
@@ -50,7 +57,7 @@ def test_versions_are_immutable(labelled, tmp_path) -> None:  # type: ignore[no-
         registry.save(settings, hurdle, card)
 
 
-def test_only_a_promoted_version_is_served(labelled, tmp_path) -> None:  # type: ignore[no-untyped-def]
+def test_only_a_promoted_version_is_served(labelled: pd.DataFrame, tmp_path: Path) -> None:
     settings = _settings(tmp_path)
     hurdle, card = _trained(labelled, settings, "v1")
     registry.save(settings, hurdle, card)
@@ -69,8 +76,8 @@ def test_only_a_promoted_version_is_served(labelled, tmp_path) -> None:  # type:
     assert registry.load(settings, card.name, "v2")[1].version == "v2"
 
 
-def test_model_card_records_what_is_needed_to_reproduce_and_audit(  # type: ignore[no-untyped-def]
-    labelled, tmp_path
+def test_model_card_records_what_is_needed_to_reproduce_and_audit(
+    labelled: pd.DataFrame, tmp_path: Path
 ) -> None:
     settings = _settings(tmp_path)
     hurdle, card = _trained(labelled, settings)
@@ -89,25 +96,25 @@ def test_model_card_records_what_is_needed_to_reproduce_and_audit(  # type: igno
     json.dumps(raw)  # serialisable
 
 
-def test_data_hash_ignores_row_order_but_notices_any_change(labelled) -> None:  # type: ignore[no-untyped-def]
+def test_data_hash_ignores_row_order_but_notices_any_change(labelled: pd.DataFrame) -> None:
     cols = features.FEATURES_V2
     base = registry.hash_training_data(labelled, cols)
 
     assert registry.hash_training_data(labelled.sample(frac=1, random_state=1), cols) == base
     edited = labelled.copy()
-    edited.iloc[0, edited.columns.get_loc("target")] += 1
+    edited.loc[edited.index[0], "target"] += 1
     assert registry.hash_training_data(edited, cols) != base
 
 
-def test_training_is_reproducible(labelled) -> None:  # type: ignore[no-untyped-def]
+def test_training_is_reproducible(labelled: pd.DataFrame) -> None:
     a = model.expected_points(model.train_v2(labelled), labelled)
     b = model.expected_points(model.train_v2(labelled), labelled)
 
     np.testing.assert_array_equal(a, b)
 
 
-def test_schema_check_accepts_matching_and_rejects_changed_features(  # type: ignore[no-untyped-def]
-    labelled, tmp_path
+def test_schema_check_accepts_matching_and_rejects_changed_features(
+    labelled: pd.DataFrame, tmp_path: Path
 ) -> None:
     settings = _settings(tmp_path)
     _, card = _trained(labelled, settings)

@@ -1,3 +1,5 @@
+from pathlib import Path
+
 import pytest
 
 from common.config import Settings
@@ -9,14 +11,14 @@ from tests.fakes import FakeFplSource
 from train.main import run as train_run
 
 
-def _ingested(tmp_path) -> Settings:  # type: ignore[no-untyped-def]
+def _ingested(tmp_path: Path) -> Settings:
     settings = Settings(data_dir=str(tmp_path), git_sha="deadbeefcafe")
     run_ingest(settings, FakeFplSource())
     return settings
 
 
-def test_a_model_that_passes_the_gate_is_registered_and_promoted(  # type: ignore[no-untyped-def]
-    tmp_path, gate_passes
+def test_a_model_that_passes_the_gate_is_registered_and_promoted(
+    tmp_path: Path, gate_passes: None
 ) -> None:
     settings = _ingested(tmp_path)
     card = train_run(settings)
@@ -30,7 +32,7 @@ def test_a_model_that_passes_the_gate_is_registered_and_promoted(  # type: ignor
     assert loaded.version == card.version and hurdle.columns == card.features
 
 
-def test_a_model_without_enough_evidence_is_saved_but_not_served(tmp_path) -> None:  # type: ignore[no-untyped-def]
+def test_a_model_without_enough_evidence_is_saved_but_not_served(tmp_path: Path) -> None:
     settings = _ingested(tmp_path)  # two finished gameweeks: nothing to hold out
     card = train_run(settings)
 
@@ -40,7 +42,7 @@ def test_a_model_without_enough_evidence_is_saved_but_not_served(tmp_path) -> No
     assert registry.load_card(settings, card.name, card.version).version == card.version
 
 
-def test_each_training_run_creates_a_new_immutable_version(tmp_path) -> None:  # type: ignore[no-untyped-def]
+def test_each_training_run_creates_a_new_immutable_version(tmp_path: Path) -> None:
     settings = _ingested(tmp_path)
     first = train_run(settings)
     second = train_run(settings)
@@ -50,8 +52,8 @@ def test_each_training_run_creates_a_new_immutable_version(tmp_path) -> None:  #
     assert list_subdirs(settings, f"models/{first.name}") == sorted([first.version, second.version])
 
 
-def test_a_model_that_fails_the_gate_is_saved_but_not_served(  # type: ignore[no-untyped-def]
-    tmp_path, gate_passes, monkeypatch
+def test_a_model_that_fails_the_gate_is_saved_but_not_served(
+    tmp_path: Path, gate_passes: None, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     settings = _ingested(tmp_path)
     champion = train_run(settings)

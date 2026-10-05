@@ -205,7 +205,9 @@ def _declared(
     )  # fmt: skip
 
 
-def _source(history: dict[str, Any] | None = None, transfers: list[dict[str, Any]] | None = None):  # type: ignore[no-untyped-def]
+def _source(
+    history: dict[str, Any] | None = None, transfers: list[dict[str, Any]] | None = None
+) -> FakeSource:
     prices = {i: 50 for i in SQUAD_IDS} | {20: 50, 21: 50}
     return FakeSource(
         history or _history({1: 0, 2: 0, 3: 0}), _picks(bank=7), transfers or [], prices

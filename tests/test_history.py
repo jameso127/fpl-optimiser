@@ -41,7 +41,7 @@ def _fetch(path: str) -> bytes:
     return files[path].encode()
 
 
-def test_import_season_writes_season_layout(tmp_path) -> None:  # type: ignore[no-untyped-def]
+def test_import_season_writes_season_layout(tmp_path: Path) -> None:
     settings = Settings(data_dir=str(tmp_path))
     assert history.import_season(settings, "2024-25", _fetch) == 2
 
@@ -50,7 +50,7 @@ def test_import_season_writes_season_layout(tmp_path) -> None:  # type: ignore[n
         assert available_gameweeks(settings, "2024-25", name) == [1, 2]
 
 
-def test_double_gameweek_rows_are_summed(tmp_path) -> None:  # type: ignore[no-untyped-def]
+def test_double_gameweek_rows_are_summed(tmp_path: Path) -> None:
     settings = Settings(data_dir=str(tmp_path))
     history.import_season(settings, "2024-25", _fetch)
     live = read_parquet(settings, gw_path("2024-25", 2, "live")).set_index("id")
@@ -60,7 +60,7 @@ def test_double_gameweek_rows_are_summed(tmp_path) -> None:  # type: ignore[no-u
     assert live.loc[1, "starts"] == 1
 
 
-def test_players_snapshot_has_all_players_and_no_leaky_columns(tmp_path) -> None:  # type: ignore[no-untyped-def]
+def test_players_snapshot_has_all_players_and_no_leaky_columns(tmp_path: Path) -> None:
     settings = Settings(data_dir=str(tmp_path))
     history.import_season(settings, "2024-25", _fetch)
     gw2 = read_parquet(settings, gw_path("2024-25", 2, "players")).set_index("id")
@@ -123,7 +123,7 @@ def test_implausible_xp_is_treated_as_missing() -> None:
     assert pd.isna(ep.loc[2])
 
 
-def test_managers_are_dropped_from_players_and_live(tmp_path) -> None:  # type: ignore[no-untyped-def]
+def test_managers_are_dropped_from_players_and_live(tmp_path: Path) -> None:
     def fetch(path: str) -> bytes:
         if path.endswith("players_raw.csv"):
             return (PLAYERS_RAW + "9,Coach,Coach,C,1,5,109,a\n").encode()
@@ -138,7 +138,7 @@ def test_managers_are_dropped_from_players_and_live(tmp_path) -> None:  # type: 
     assert 9 not in set(read_parquet(settings, gw_path("2024-25", 1, "live"))["id"])
 
 
-def test_load_ep_next_reads_each_snapshot_for_its_own_gameweek(tmp_path) -> None:  # type: ignore[no-untyped-def]
+def test_load_ep_next_reads_each_snapshot_for_its_own_gameweek(tmp_path: Path) -> None:
     from ml.data import load_ep_next
 
     settings = Settings(data_dir=str(tmp_path))
@@ -151,7 +151,7 @@ def test_load_ep_next_reads_each_snapshot_for_its_own_gameweek(tmp_path) -> None
     assert set(load_ep_next(settings, "2024-25", upto=1)["gameweek"]) == {1}
 
 
-def test_teams_and_fixtures_keep_only_known_columns(tmp_path) -> None:  # type: ignore[no-untyped-def]
+def test_teams_and_fixtures_keep_only_known_columns(tmp_path: Path) -> None:
     settings = Settings(data_dir=str(tmp_path))
     history.import_season(settings, "2024-25", _fetch)
 
@@ -160,7 +160,7 @@ def test_teams_and_fixtures_keep_only_known_columns(tmp_path) -> None:  # type: 
     assert list(fixtures["team_h"]) == [1]
 
 
-def test_reimport_is_idempotent(tmp_path) -> None:  # type: ignore[no-untyped-def]
+def test_reimport_is_idempotent(tmp_path: Path) -> None:
     settings = Settings(data_dir=str(tmp_path))
     history.import_season(settings, "2024-25", _fetch)
     first = read_parquet(settings, gw_path("2024-25", 2, "live"))

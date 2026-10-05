@@ -4,6 +4,7 @@ from typing import Any
 
 import httpx
 import pytest
+from pydantic import SecretStr
 
 import notify.telegram as telegram
 from common.config import Settings
@@ -147,7 +148,7 @@ def test_errors_never_contain_the_bot_token() -> None:
         _sender(unreachable).send(1, "x")
 
     assert TOKEN not in str(raised.value) and raised.value.__cause__ is None
-    assert TOKEN not in repr(Settings(telegram_bot_token=TOKEN))  # type: ignore[arg-type]
+    assert TOKEN not in repr(Settings(telegram_bot_token=SecretStr(TOKEN)))
 
 
 # --- the job ----------------------------------------------------------------------------------

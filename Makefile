@@ -1,4 +1,4 @@
-.PHONY: setup lint test pipeline train backtest api
+.PHONY: setup lint test pipeline train backtest
 
 setup:
 	uv sync
@@ -26,6 +26,3 @@ train:
 
 backtest:
 	uv run python -m ml.backtest --no-ablation
-
-api:
-	@echo "api not implemented yet"

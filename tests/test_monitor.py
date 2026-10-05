@@ -1,4 +1,5 @@
 import logging
+from pathlib import Path
 
 import pandas as pd
 import pytest
@@ -33,8 +34,8 @@ def _store(settings: Settings, gw: int, xpts_good: bool, ep_good: bool = False) 
     )
 
 
-def test_live_performance_compares_served_predictions_with_results_and_ep_next(  # type: ignore[no-untyped-def]
-    tmp_path,
+def test_live_performance_compares_served_predictions_with_results_and_ep_next(
+    tmp_path: Path,
 ) -> None:
     settings = Settings(data_dir=str(tmp_path))
     _store(settings, 3, xpts_good=True)
@@ -53,7 +54,7 @@ def test_live_performance_compares_served_predictions_with_results_and_ep_next( 
     assert row["spearman_xpts"] > 0.9 > 0 > row["spearman_ep_next"]
 
 
-def test_a_blank_gameweek_player_is_not_scored(tmp_path) -> None:  # type: ignore[no-untyped-def]
+def test_a_blank_gameweek_player_is_not_scored(tmp_path: Path) -> None:
     settings = Settings(data_dir=str(tmp_path))
     _store(settings, 3, xpts_good=True)
     preds = read_parquet(settings, gw_path(SEASON, 3, "predictions"))
@@ -63,8 +64,8 @@ def test_a_blank_gameweek_player_is_not_scored(tmp_path) -> None:  # type: ignor
     assert monitor.live_performance(settings, SEASON).iloc[0]["players"] == 50
 
 
-def test_warns_when_the_served_model_lately_trails_fpls_expected_points(  # type: ignore[no-untyped-def]
-    tmp_path, caplog: pytest.LogCaptureFixture
+def test_warns_when_the_served_model_lately_trails_fpls_expected_points(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
 ) -> None:
     settings = Settings(data_dir=str(tmp_path))
     for gw in range(1, 6):
