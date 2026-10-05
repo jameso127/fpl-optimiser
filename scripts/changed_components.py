@@ -18,8 +18,8 @@ from pathlib import Path
 # What each component's image contains (see the COPY lines in its Dockerfile).
 IMAGE_CONTENTS: dict[str, tuple[str, ...]] = {
     "ingest": ("common/", "ingest/"),
-    "train": ("common/", "ingest/", "ml/", "train/"),
-    "predict": ("common/", "ingest/", "ml/", "predict/"),
+    "train": ("common/", "ml/", "train/"),
+    "predict": ("common/", "ml/", "predict/"),
     "optimise": ("common/", "optimise/"),
     "notify": ("common/", "notify/"),
 }

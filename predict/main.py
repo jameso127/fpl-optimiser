@@ -28,8 +28,6 @@ from common.storage import (
     read_parquet,
     write_parquet,
 )
-from ingest.dry_run import DryRunSource
-from ingest.main import run as run_ingest
 from ml import features, model, registry
 from ml.data import season_features
 
@@ -73,10 +71,7 @@ def run(settings: Settings) -> int:
     if not snapshots:
         raise RuntimeError(f"no players snapshot for season {season}; run ingest first")
     gameweek = settings.gameweek or snapshots[-1]
-    log.info(
-        "predict start",
-        extra={"season": season, "gameweek": gameweek, "dry_run": settings.dry_run},
-    )
+    log.info("predict start", extra={"season": season, "gameweek": gameweek})
 
     players = read_parquet(settings, gw_path(season, gameweek, "players"))
     teams = read_parquet(settings, gw_path(season, gameweek, "teams"))
@@ -100,8 +95,6 @@ def run(settings: Settings) -> int:
 def main() -> None:
     settings = get_settings()
     configure_logging(settings.log_level)
-    if settings.dry_run:
-        run_ingest(settings, DryRunSource())
     run(settings)
 
 

@@ -17,8 +17,8 @@ __all__ = [
 
 
 def get_user_repository(settings: Settings) -> UserRepository:
-    """Firestore in production; in-memory for dry runs, tests and local use."""
-    if settings.dry_run or settings.users_backend == "memory":
+    """Firestore in production; in-memory for tests and local use."""
+    if settings.users_backend == "memory":
         return InMemoryUserRepository()
     from google.cloud import firestore
 

@@ -4,35 +4,32 @@ from collections import Counter
 import httpx
 import pytest
 
-from common.config import Settings, get_settings
+from common.config import Settings
 from common.fpl_client import FplClient
 from common.storage import read_json
-from optimise import dry_run
 from optimise.main import build_pool, recommendation_path, run
-from optimise.main import main as optimise_main
+from tests import fakes
 
 
 def _settings(tmp_path, **kwargs) -> Settings:  # type: ignore[no-untyped-def]
-    return Settings(data_dir=str(tmp_path), dry_run=True, season=dry_run.SEASON, **kwargs)
+    return Settings(data_dir=str(tmp_path), season=fakes.SEASON, **kwargs)
 
 
 def _run(tmp_path, **kwargs):  # type: ignore[no-untyped-def]
     settings = _settings(tmp_path, **kwargs)
-    world = dry_run.seed_storage(settings)
-    return settings, world, run(settings, dry_run.DryRunEntrySource(world), dry_run.TEAM_ID)
+    world = fakes.seed_storage(settings)
+    return settings, world, run(settings, fakes.FakeEntrySource(world), fakes.TEAM_ID)
 
 
-def test_dry_run_writes_a_recommendation_for_every_number_of_transfers(tmp_path) -> None:  # type: ignore[no-untyped-def]
+def test_writes_a_recommendation_for_every_number_of_transfers(tmp_path) -> None:  # type: ignore[no-untyped-def]
     settings, _, rec = _run(tmp_path, max_transfers=3)
-    stored = read_json(
-        settings, recommendation_path(dry_run.SEASON, dry_run.GAMEWEEK, dry_run.TEAM_ID)
-    )
+    stored = read_json(settings, recommendation_path(fakes.SEASON, fakes.GAMEWEEK, fakes.TEAM_ID))
 
     assert stored == json.loads(json.dumps(rec))  # what was returned is what was stored
     assert [o["transfers"] for o in stored["options"]] == [0, 1, 2, 3]
     assert stored["recommended_transfers"] in {0, 1, 2, 3}
-    assert stored["team_id"] == dry_run.TEAM_ID and stored["gameweek"] == dry_run.GAMEWEEK
-    assert stored["model_version"] == "dry-run"
+    assert stored["team_id"] == fakes.TEAM_ID and stored["gameweek"] == fakes.GAMEWEEK
+    assert stored["model_version"] == "test-model"
 
 
 def test_every_option_is_a_legal_team(tmp_path) -> None:  # type: ignore[no-untyped-def]
@@ -76,7 +73,7 @@ def test_selling_prices_come_from_the_purchase_history(tmp_path) -> None:  # typ
 
 def test_rerunning_overwrites_with_the_same_answer(tmp_path) -> None:  # type: ignore[no-untyped-def]
     settings, world, first = _run(tmp_path)
-    second = run(settings, dry_run.DryRunEntrySource(world), dry_run.TEAM_ID)
+    second = run(settings, fakes.FakeEntrySource(world), fakes.TEAM_ID)
 
     assert first["options"] == second["options"]
     assert first["recommended_transfers"] == second["recommended_transfers"]
@@ -84,17 +81,17 @@ def test_rerunning_overwrites_with_the_same_answer(tmp_path) -> None:  # type: i
 
 def test_a_missing_team_id_or_predictions_is_a_clear_error(tmp_path) -> None:  # type: ignore[no-untyped-def]
     settings = _settings(tmp_path)
-    world = dry_run.synthetic_world()
+    world = fakes.synthetic_world()
     with pytest.raises(RuntimeError, match="FPL_TEAM_ID"):
-        run(settings, dry_run.DryRunEntrySource(world))
+        run(settings, fakes.FakeEntrySource(world))
 
     empty = _settings(tmp_path / "elsewhere")
     with pytest.raises(RuntimeError, match="no data found"):
-        run(empty, dry_run.DryRunEntrySource(world), team_id=1)
+        run(empty, fakes.FakeEntrySource(world), team_id=1)
 
 
 def test_the_pool_has_positive_scorers_and_everyone_already_owned() -> None:
-    world = dry_run.synthetic_world()
+    world = fakes.synthetic_world()
     xpts = world.players.set_index("id")["xpts"]
     owned = set(world.squad)
     pool_ids = {p.id for p in build_pool(world.players, xpts, owned)}
@@ -102,24 +99,6 @@ def test_the_pool_has_positive_scorers_and_everyone_already_owned() -> None:
     assert owned <= pool_ids
     assert all(i in owned or xpts[i] > 0 for i in pool_ids)
     assert not any(i not in owned and xpts[i] == 0 for i in pool_ids)
-
-
-def test_the_job_entrypoint_runs_in_dry_run_mode(tmp_path, monkeypatch) -> None:  # type: ignore[no-untyped-def]
-    monkeypatch.setenv("DRY_RUN", "true")
-    monkeypatch.setenv("DATA_DIR", str(tmp_path))
-    monkeypatch.delenv("DATA_BUCKET", raising=False)
-    get_settings.cache_clear()
-    try:
-        optimise_main()
-    finally:
-        get_settings.cache_clear()
-
-    path = (
-        tmp_path
-        / "dry_run"
-        / recommendation_path(dry_run.SEASON, dry_run.GAMEWEEK, dry_run.TEAM_ID)
-    )
-    assert path.is_file()
 
 
 def test_the_client_exposes_the_per_manager_endpoints() -> None:
@@ -150,7 +129,7 @@ def test_declared_transfers_change_the_squad_the_advice_starts_from(tmp_path) ->
     from common.users.models import DeclaredTransfer
 
     settings = _settings(tmp_path, max_transfers=2)
-    world = dry_run.seed_storage(settings)
+    world = fakes.seed_storage(settings)
     rows = {int(r["id"]): r for r in world.players.to_dict("records")}
     owned = set(world.squad)
     club_count = Counter(int(rows[i]["team"]) for i in owned)
@@ -163,11 +142,11 @@ def test_declared_transfers_change_the_squad_the_advice_starts_from(tmp_path) ->
     ]  # fmt: skip
     bought = candidates[0]
     declared = DeclaredTransfer(
-        season=dry_run.SEASON, gameweek=dry_run.GAMEWEEK, out_id=sold, in_id=bought,
+        season=fakes.SEASON, gameweek=fakes.GAMEWEEK, out_id=sold, in_id=bought,
         out_price=world.purchase[sold], in_price=int(rows[bought]["now_cost"]),
         declared_at=dt.datetime(2026, 10, 9, 8, 0, tzinfo=dt.UTC),
     )  # fmt: skip
-    rec = run(settings, dry_run.DryRunEntrySource(world), dry_run.TEAM_ID, declared=[declared])
+    rec = run(settings, fakes.FakeEntrySource(world), fakes.TEAM_ID, declared=[declared])
 
     hold = rec["options"][0]
     held = {p["id"] for p in hold["starting_xi"] + hold["bench"]}

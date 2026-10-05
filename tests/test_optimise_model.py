@@ -3,12 +3,13 @@ from collections import Counter
 
 import pytest
 
-from optimise import dry_run, model
+from optimise import model
 from optimise.model import Player, Problem, Solution
+from tests.fakes import synthetic_world
 
 
 def _problem(seed: int = 7, free_transfers: int = 1, bank: int | None = None, w: float = 0.1):  # type: ignore[no-untyped-def]
-    world = dry_run.synthetic_world(seed)
+    world = synthetic_world(seed)
     pool = tuple(
         Player(
             int(r["id"]),

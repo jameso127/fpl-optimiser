@@ -72,8 +72,7 @@ web -> FastAPI (Cloud Run service) -> reads predictions, runs optimiser per user
   names or URLs.
 - Structured JSON logging (Cloud Logging friendly).
 - Jobs must be idempotent: re-running a gameweek overwrites that gameweek's outputs.
-- Every job supports `DRY_RUN=true` (fixture data, no email sent) so it works out of season
-  and in CI.
+- No dry-run mode (a decision, to keep the code simple): tests use fake sources in `tests/fakes.py`.
 - API: expose OpenAPI (`/openapi.json`), since the web repo generates types from it. Keep
   response schemas stable; flag breaking changes to me. Enable CORS only for the frontend
   origin (from env var). Return clear errors (404 unknown team ID, 429 rate limited).
@@ -97,7 +96,6 @@ web -> FastAPI (Cloud Run service) -> reads predictions, runs optimiser per user
   2. Push images to Artifact Registry tagged with the git SHA. Never deploy `latest`.
   3. Update the existing Cloud Run jobs / service to the new image
      (`gcloud run jobs update --image ...`, `gcloud run deploy --image ...`).
-  4. Optionally trigger a dry-run of the workflow as a smoke test.
 - Pin actions to a version or SHA. Use least-privilege `permissions:` on each workflow.
 
 ## Secrets
@@ -112,7 +110,7 @@ web -> FastAPI (Cloud Run service) -> reads predictions, runs optimiser per user
 make setup      # install deps
 make lint       # ruff + mypy
 make test       # pytest
-make pipeline   # ingest -> predict -> optimise locally against ./data (dry-run capable)
+make pipeline   # ingest -> predict -> optimise locally against ./data
 make api        # run FastAPI locally
 ```
 (TODO: keep in sync with the Makefile.)

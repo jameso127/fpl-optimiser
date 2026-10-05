@@ -21,11 +21,9 @@ import pandas as pd
 
 from common.config import Settings, get_settings
 from common.logging import configure_logging
-from ingest.dry_run import DryRunSource
-from ingest.main import run as run_ingest
 from ml import backtest, features, gate, model, monitor, registry
 from ml.data import all_season_features
-from ml.registry import GateOutcome, ModelCard
+from ml.registry import ModelCard
 
 log = logging.getLogger(__name__)
 
@@ -103,12 +101,9 @@ def run(settings: Settings) -> ModelCard:
     )
     registry.save(settings, final, card, preds if not preds.empty else None)
 
-    if settings.dry_run:
-        outcome = GateOutcome(promoted=True, reasons=["dry run: promotion gate not evaluated"])
-    else:
-        outcome = gate.evaluate_gate(
-            summary, _leak_status(audit), _champion_delta(settings, feats, preds)
-        )
+    outcome = gate.evaluate_gate(
+        summary, _leak_status(audit), _champion_delta(settings, feats, preds)
+    )
     card.gate = outcome
     registry.update_card(settings, card)
     if outcome.promoted:
@@ -125,8 +120,6 @@ def run(settings: Settings) -> ModelCard:
 def main() -> None:
     settings = get_settings()
     configure_logging(settings.log_level)
-    if settings.dry_run:
-        run_ingest(settings, DryRunSource())
     run(settings)
 
 

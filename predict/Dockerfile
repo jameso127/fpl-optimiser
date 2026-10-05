@@ -15,7 +15,6 @@ COPY pyproject.toml uv.lock ./
 RUN uv sync --frozen --no-dev --group predict --no-install-project
 
 COPY common ./common
-COPY ingest ./ingest
 COPY ml ./ml
 COPY predict ./predict
 

@@ -4,12 +4,12 @@ import pytest
 
 from common.config import Settings
 from common.storage import gw_path, read_parquet, write_parquet
-from ingest.dry_run import DryRunSource
 from ingest.main import run as run_ingest
 from ml import backtest, features, model, registry
 from ml.features import build_features
 from predict.main import NoModelError
 from predict.main import run as run_predict
+from tests.fakes import FakeFplSource
 from train.main import run as train_run
 
 SEASON = "2025-26"
@@ -33,8 +33,8 @@ def test_availability_rules() -> None:
 
 
 def _ingested(tmp_path) -> Settings:  # type: ignore[no-untyped-def]
-    settings = Settings(data_dir=str(tmp_path), dry_run=True)
-    run_ingest(settings, DryRunSource())
+    settings = Settings(data_dir=str(tmp_path))
+    run_ingest(settings, FakeFplSource())
     return settings
 
 
@@ -42,13 +42,8 @@ def _predictions(settings: Settings, gameweek: int = 3) -> pd.DataFrame:
     return read_parquet(settings, gw_path(SEASON, gameweek, "predictions"))
 
 
-def test_dry_run_never_resolves_to_the_bucket() -> None:
-    settings = Settings(data_bucket="real-bucket", dry_run=True)
-    assert "real-bucket" not in settings.data_root
-
-
 def test_predict_serves_the_promoted_model_and_never_trains(  # type: ignore[no-untyped-def]
-    tmp_path, monkeypatch
+    tmp_path, monkeypatch, gate_passes
 ) -> None:
     settings = _ingested(tmp_path)
     card = train_run(settings)
@@ -67,7 +62,6 @@ def test_predict_serves_the_promoted_model_and_never_trains(  # type: ignore[no-
     assert out["xpts"].notna().all()
     # ep_next is carried only as a benchmark; xpts is the model's own number.
     assert out["ep_next"].notna().all() and not (out["xpts"] == out["ep_next"]).all()
-    assert settings.data_root.endswith("dry_run")  # dry runs stay out of the real data root
 
 
 def test_predict_fails_with_a_clear_message_when_no_model_is_promoted(  # type: ignore[no-untyped-def]
@@ -87,7 +81,7 @@ def read_parquet_exists(settings: Settings) -> bool:
 
 
 def test_predict_scales_the_chance_of_playing_by_injury_news(  # type: ignore[no-untyped-def]
-    tmp_path,
+    tmp_path, gate_passes
 ) -> None:
     settings = _ingested(tmp_path)
     train_run(settings)
@@ -105,7 +99,7 @@ def test_predict_scales_the_chance_of_playing_by_injury_news(  # type: ignore[no
 
 
 def test_predict_gives_a_player_with_no_fixture_zero_points(  # type: ignore[no-untyped-def]
-    tmp_path,
+    tmp_path, gate_passes
 ) -> None:
     settings = _ingested(tmp_path)
     train_run(settings)
@@ -125,7 +119,9 @@ def test_predict_gives_a_player_with_no_fixture_zero_points(  # type: ignore[no-
     assert (out.loc[teams.index[teams.isin([1, 2])], "xpts"] > 0).all()
 
 
-def test_serving_stops_if_the_features_no_longer_match_the_model(tmp_path) -> None:  # type: ignore[no-untyped-def]
+def test_serving_stops_if_the_features_no_longer_match_the_model(  # type: ignore[no-untyped-def]
+    tmp_path, gate_passes
+) -> None:
     settings = _ingested(tmp_path)
     card = train_run(settings)
     card.features = [*card.features, "a_feature_the_code_no_longer_builds"]

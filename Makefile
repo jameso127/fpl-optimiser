@@ -17,7 +17,7 @@ pipeline:
 	uv run python -m ingest.main
 	uv run python -m train.main
 	uv run python -m predict.main
-	uv run python -m optimise.main   # needs FPL_TEAM_ID (or DRY_RUN=true)
+	uv run python -m optimise.main   # needs FPL_TEAM_ID
 
 train:
 	uv run python -m train.main

@@ -2,6 +2,9 @@ import numpy as np
 import pandas as pd
 import pytest
 
+from ml import gate
+from ml.registry import GateOutcome
+
 
 @pytest.fixture
 def synthetic() -> dict[str, pd.DataFrame]:
@@ -86,3 +89,10 @@ def labelled(synthetic: dict[str, pd.DataFrame]) -> pd.DataFrame:
         f["dc_era"] = float(season >= features.DC_FIRST_SEASON)
         frames.append(f)
     return features.usable(pd.concat(frames, ignore_index=True)).dropna(subset=["target"])
+
+
+@pytest.fixture
+def gate_passes(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Make the promotion gate pass. Fixture data is far too small to earn a promotion."""
+    outcome = GateOutcome(promoted=True, reasons=["pass: forced for the test"])
+    monkeypatch.setattr(gate, "evaluate_gate", lambda *args, **kwargs: outcome)

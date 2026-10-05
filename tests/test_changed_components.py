@@ -18,8 +18,8 @@ def test_shared_ml_code_rebuilds_the_jobs_that_ship_it() -> None:
     assert components_for(["ml/features.py"], ALL) == ["predict", "train"]
 
 
-def test_ingest_changes_also_rebuild_the_jobs_that_copy_it_for_dry_runs() -> None:
-    assert components_for(["ingest/main.py"], ALL) == ["ingest", "predict", "train"]
+def test_ingest_changes_rebuild_only_ingest() -> None:
+    assert components_for(["ingest/main.py"], ALL) == ["ingest"]
 
 
 def test_common_and_dependency_changes_rebuild_everything() -> None:

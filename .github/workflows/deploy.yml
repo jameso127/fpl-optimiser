@@ -10,7 +10,6 @@ name: deploy
 # Repository variables, set by the infra repo's `scripts/set-github-variables.sh`:
 #   GCP_PROJECT_ID, GCP_REGION, GCP_WIF_PROVIDER, GCP_DEPLOYER_SA,
 #   ARTIFACT_REGISTRY_REPO, DATA_BUCKET
-# Optional: RUN_SMOKE_TEST=true runs the pipeline workflow as a dry run after deploying.
 
 on:
   push:
@@ -92,25 +91,3 @@ jobs:
         run: |
           gcloud run jobs update "fpl-${COMPONENT}" \
             --project "$PROJECT" --region "$REGION" --image "$IMAGE"
-
-  smoke-test:
-    needs: deploy
-    if: needs.deploy.result == 'success' && vars.RUN_SMOKE_TEST == 'true'
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      id-token: write
-    steps:
-      - uses: google-github-actions/auth@v2
-        with:
-          workload_identity_provider: ${{ vars.GCP_WIF_PROVIDER }}
-          service_account: ${{ vars.GCP_DEPLOYER_SA }}
-      - uses: google-github-actions/setup-gcloud@v2
-      - name: Run the pipeline end to end on fixture data
-        env:
-          PROJECT: ${{ vars.GCP_PROJECT_ID }}
-          REGION: ${{ vars.GCP_REGION }}
-        run: |
-          gcloud workflows run fpl-pipeline \
-            --project "$PROJECT" --location "$REGION" \
-            --data '{"dry_run": true}'

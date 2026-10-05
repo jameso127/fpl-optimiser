@@ -15,7 +15,6 @@ from common.fpl_client import FplClient, FplSource
 from common.logging import configure_logging
 from common.storage import exists, gw_path, write_parquet
 from ingest import transform
-from ingest.dry_run import DryRunSource
 
 log = logging.getLogger(__name__)
 
@@ -24,10 +23,7 @@ def run(settings: Settings, source: FplSource) -> int:
     bootstrap = source.bootstrap()
     season = settings.season or transform.season_label(bootstrap)
     gameweek = settings.gameweek or transform.target_gameweek(bootstrap)
-    log.info(
-        "ingest start",
-        extra={"season": season, "gameweek": gameweek, "dry_run": settings.dry_run},
-    )
+    log.info("ingest start", extra={"season": season, "gameweek": gameweek})
 
     snapshot = {
         "players": transform.players_frame(bootstrap),
@@ -55,8 +51,7 @@ def run(settings: Settings, source: FplSource) -> int:
 def main() -> None:
     settings = get_settings()
     configure_logging(settings.log_level)
-    source: FplSource = DryRunSource() if settings.dry_run else FplClient(settings)
-    run(settings, source)
+    run(settings, FplClient(settings))
 
 
 if __name__ == "__main__":

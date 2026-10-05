@@ -143,7 +143,6 @@ run the `uv run ...` commands directly).
 uv sync                                   # make setup
 uv run ruff check . && uv run ruff format --check . && uv run mypy .   # make lint
 uv run pytest                             # make test
-DRY_RUN=true uv run python -m ingest.main # fixture data, no network (writes ./data/dry_run)
 uv run python -m ingest.main              # live FPL API -> ./data
 uv run python -m ingest.history           # one-off: past seasons -> ./data
 uv run python -m train.main               # train, evaluate, register, maybe promote a model

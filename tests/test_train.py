@@ -2,31 +2,42 @@ import pytest
 
 from common.config import Settings
 from common.storage import list_subdirs
-from ingest.dry_run import DryRunSource
 from ingest.main import run as run_ingest
 from ml import gate, registry
 from ml.registry import GateOutcome
+from tests.fakes import FakeFplSource
 from train.main import run as train_run
 
 
 def _ingested(tmp_path) -> Settings:  # type: ignore[no-untyped-def]
-    settings = Settings(data_dir=str(tmp_path), dry_run=True, git_sha="deadbeefcafe")
-    run_ingest(settings, DryRunSource())
+    settings = Settings(data_dir=str(tmp_path), git_sha="deadbeefcafe")
+    run_ingest(settings, FakeFplSource())
     return settings
 
 
-def test_dry_run_trains_registers_and_promotes_a_model(tmp_path) -> None:  # type: ignore[no-untyped-def]
+def test_a_model_that_passes_the_gate_is_registered_and_promoted(  # type: ignore[no-untyped-def]
+    tmp_path, gate_passes
+) -> None:
     settings = _ingested(tmp_path)
     card = train_run(settings)
 
     assert registry.latest_version(settings, card.name) == card.version
     assert card.version.endswith("-deadbee")
     assert card.gate is not None and card.gate.promoted
-    assert "dry run" in card.gate.reasons[0]
     assert card.train_rows > 0 and card.git_sha == "deadbeefcafe"
     # The artifact on disk reloads to a usable model.
     hurdle, loaded = registry.load(settings, card.name)
     assert loaded.version == card.version and hurdle.columns == card.features
+
+
+def test_a_model_without_enough_evidence_is_saved_but_not_served(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    settings = _ingested(tmp_path)  # two finished gameweeks: nothing to hold out
+    card = train_run(settings)
+
+    assert card.gate is not None and not card.gate.promoted
+    assert "holdout gameweeks" in card.gate.reasons[0]
+    assert registry.latest_version(settings, card.name) is None
+    assert registry.load_card(settings, card.name, card.version).version == card.version
 
 
 def test_each_training_run_creates_a_new_immutable_version(tmp_path) -> None:  # type: ignore[no-untyped-def]
@@ -40,16 +51,14 @@ def test_each_training_run_creates_a_new_immutable_version(tmp_path) -> None:  #
 
 
 def test_a_model_that_fails_the_gate_is_saved_but_not_served(  # type: ignore[no-untyped-def]
-    tmp_path, monkeypatch
+    tmp_path, gate_passes, monkeypatch
 ) -> None:
     settings = _ingested(tmp_path)
     champion = train_run(settings)
 
     failing = GateOutcome(promoted=False, reasons=["FAIL: forced for the test"])
     monkeypatch.setattr(gate, "evaluate_gate", lambda *a, **k: failing)
-    # The gate is skipped in dry runs, so train "for real" against the same dry-run directory.
-    live = Settings(data_dir=settings.data_root, dry_run=False, git_sha="deadbeefcafe")
-    challenger = train_run(live)
+    challenger = train_run(settings)
 
     assert challenger.gate is not None and not challenger.gate.promoted
     assert registry.latest_version(settings, champion.name) == champion.version  # unchanged

@@ -14,7 +14,7 @@ _RETRY_STATUS = {429, 500, 502, 503, 504}
 
 
 class FplSource(Protocol):
-    """What ingest needs; the dry-run source implements this with fixture data."""
+    """What ingest needs; tests implement this with fixture data."""
 
     def bootstrap(self) -> dict[str, Any]: ...
     def fixtures(self) -> list[dict[str, Any]]: ...

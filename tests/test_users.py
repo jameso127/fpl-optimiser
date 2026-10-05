@@ -206,6 +206,5 @@ def test_declared_transfers_expire_after_the_retention_period() -> None:
     assert t.expires_at - t.declared_at == DECLARED_TRANSFER_RETENTION
 
 
-def test_the_factory_gives_memory_for_dry_runs_and_never_touches_firestore() -> None:
-    assert isinstance(get_user_repository(Settings(dry_run=True)), InMemoryUserRepository)
+def test_the_factory_gives_memory_when_asked_and_never_touches_firestore() -> None:
     assert isinstance(get_user_repository(Settings(users_backend="memory")), InMemoryUserRepository)

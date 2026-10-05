@@ -20,7 +20,7 @@ from common.fpl_client import FplClient
 from common.logging import configure_logging
 from common.storage import available_gameweeks, available_seasons, gw_path, read_parquet, write_json
 from common.users.models import DeclaredTransfer
-from optimise import dry_run, model, squad
+from optimise import model, squad
 from optimise.model import POSITION_NAMES, Player, Problem, Solution
 from optimise.squad import EntrySource, Squad
 
@@ -234,11 +234,6 @@ def run(
 def main() -> None:
     settings = get_settings()
     configure_logging(settings.log_level)
-    if settings.dry_run:
-        world = dry_run.seed_storage(settings)
-        settings = settings.model_copy(update={"season": dry_run.SEASON})
-        run(settings, dry_run.DryRunEntrySource(world), team_id=dry_run.TEAM_ID)
-        return
     run(settings, FplClient(settings))
 
 
