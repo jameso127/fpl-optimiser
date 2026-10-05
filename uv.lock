@@ -556,6 +556,10 @@ dev = [
     { name = "pandas-stubs" },
     { name = "pytest" },
     { name = "ruff" },
+    { name = "scipy" },
+]
+optimise = [
+    { name = "scipy" },
 ]
 predict = [
     { name = "lightgbm" },
@@ -578,7 +582,9 @@ dev = [
     { name = "pandas-stubs", specifier = ">=2.2" },
     { name = "pytest", specifier = ">=8" },
     { name = "ruff", specifier = ">=0.5" },
+    { name = "scipy", specifier = ">=1.11" },
 ]
+optimise = [{ name = "scipy", specifier = ">=1.11" }]
 predict = [{ name = "lightgbm", specifier = ">=4.3" }]
 
 [[package]]

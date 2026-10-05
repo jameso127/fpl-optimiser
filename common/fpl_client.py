@@ -91,3 +91,20 @@ class FplClient:
     def live(self, gameweek: int) -> dict[str, Any]:
         result: dict[str, Any] = self.get(f"event/{gameweek}/live/")
         return result
+
+    # Per-manager endpoints (used by the optimiser to rebuild a squad).
+    def entry_history(self, team_id: int) -> dict[str, Any]:
+        result: dict[str, Any] = self.get(f"entry/{team_id}/history/")
+        return result
+
+    def entry_picks(self, team_id: int, gameweek: int) -> dict[str, Any]:
+        result: dict[str, Any] = self.get(f"entry/{team_id}/event/{gameweek}/picks/")
+        return result
+
+    def entry_transfers(self, team_id: int) -> list[dict[str, Any]]:
+        result: list[dict[str, Any]] = self.get(f"entry/{team_id}/transfers/")
+        return result
+
+    def element_summary(self, player_id: int) -> dict[str, Any]:
+        result: dict[str, Any] = self.get(f"element-summary/{player_id}/")
+        return result

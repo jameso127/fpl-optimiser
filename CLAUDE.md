@@ -63,7 +63,7 @@ web -> FastAPI (Cloud Run service) -> reads predictions, runs optimiser per user
 
 - Python 3.12, `uv`. Type hints everywhere.
 - `ruff` (lint + format), `mypy`, `pytest`.
-- Optimiser: HiGHS (`highspy`). Model: LightGBM or ridge. Keep it simple.
+- Optimiser: HiGHS via SciPy's `milp` (no extra dependency). Model: LightGBM or ridge. Keep it simple.
 - Each deployable has its own `Dockerfile`; shared code is in `/common`, copied into images.
   Build with the repo root as context.
 - Config via environment variables (pydantic-settings). No hardcoded project IDs, bucket

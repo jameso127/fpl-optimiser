@@ -15,8 +15,11 @@ dependencies = [
 [dependency-groups]
 # Installed only into the predict image (`uv sync --no-dev --group predict`).
 predict = ["lightgbm>=4.3"]
+# The optimiser: SciPy's milp, which solves with HiGHS.
+optimise = ["scipy>=1.11"]
 dev = [
     {include-group = "predict"},
+    {include-group = "optimise"},
     "pytest>=8",
     "ruff>=0.5",
     "mypy>=1.10",

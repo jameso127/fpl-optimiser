@@ -26,6 +26,7 @@ is cheap and runs on demand.
 | `ml/` features, model, registry, promotion gate, monitoring, backtest | done |
 | `train/` train, evaluate, register and (if it passes the gate) promote a model | done |
 | `predict/` serve the promoted model | done |
+| `optimise/` squad and transfer optimiser (MILP, HiGHS via SciPy) | done |
 | `optimise/`, `notify/`, `api/` | not started |
 | `.github/` CI and deploy | not started |
 
@@ -77,6 +78,31 @@ Training and serving are separate jobs with separate lifecycles:
 Bucket layout additions: `models/<name>/<version>/...`, `models/<name>/latest.json` and
 `monitoring/season=<s>/...`, alongside `season=<s>/gw=<n>/...`.
 
+## Optimiser
+
+`optimise` turns the predictions into advice for one manager (`FPL_TEAM_ID`). For each number
+of transfers 0..N (`MAX_TRANSFERS`, default 4) it solves a mixed-integer program (SciPy's
+`milp`, which uses the HiGHS solver) for the best squad, starting XI, captain, vice-captain
+and bench order, and writes `season=<s>/gw=<n>/recommendations/<team_id>.json`.
+
+- **Formulation:** binary variables per player for squad, starter and captain. Maximise the
+  starters' expected points plus the captain's second share and a small bench weight. Subject
+  to 15 players (2/5/5/3), at most 3 per club, the budget, a legal XI (1 GK, 3-5 DEF, 2-5 MID,
+  1-3 FWD), one captain who starts, and exactly k players changed. The hit is
+  `4 x max(0, k - free transfers)`.
+- **Budget** is the squad's *selling* prices plus the bank; players already owned cost their
+  selling price, everyone else the market price.
+- **Recommendation:** the best net option, but only if each transfer earns at least
+  `MIN_GAIN_PER_TRANSFER` (0.5) expected points over holding, preferring fewer transfers
+  within 0.25 points. Predictions are noisy, so small projected gains are not acted on.
+- **Squad reconstruction** (`optimise/squad.py`) is the fragile part: FPL does not expose
+  selling prices or free transfers, so they are derived from the picks, transfer history and
+  chips (Free Hit weeks handled). Free transfers are an estimate; set
+  `FREE_TRANSFERS_OVERRIDE` when it is wrong (FPL occasionally grants top-ups the API does not
+  show).
+- **Limits:** one gameweek ahead only (the model predicts one gameweek), and chips are not
+  modelled.
+
 ## Expected points
 
 Expected points always come from the model: chance of playing x points if playing (LightGBM),
@@ -98,6 +124,7 @@ uv run python -m ingest.main              # live FPL API -> ./data
 uv run python -m ingest.history           # one-off: past seasons -> ./data
 uv run python -m train.main               # train, evaluate, register, maybe promote a model
 uv run python -m predict.main             # score the latest snapshot with the promoted model
+uv run python -m optimise.main            # best team for 0..N transfers (needs FPL_TEAM_ID)
 uv run python -m ml.backtest              # regenerate docs/backtest.md (--no-ablation: lighter)
 ```
 
