@@ -7,7 +7,7 @@ boundary. The model sees seasons as separate pools of (player, gameweek) rows.
 import pandas as pd
 
 from common.config import Settings
-from common.storage import available_gameweeks, gw_path, read_parquet
+from common.storage import available_gameweeks, available_seasons, gw_path, read_parquet
 from predict import features
 
 
@@ -39,6 +39,18 @@ def load_ep_next(settings: Settings, season: str, upto: int | None = None) -> pd
     return pd.concat(frames, ignore_index=True)
 
 
+def load_prior(settings: Settings, season: str) -> pd.DataFrame | None:
+    """Last season's per-player rates (keyed by `code`), or None if it isn't stored."""
+    prev = features.previous_season(season)
+    if prev not in available_seasons(settings) or not available_gameweeks(settings, prev, "live"):
+        return None
+    snap = max(available_gameweeks(settings, prev, "players"))
+    players = read_parquet(settings, gw_path(prev, snap, "players"))
+    if "code" not in players.columns:
+        return None
+    return features.prior_season_rates(load_live(settings, prev), players)
+
+
 def season_features(
     settings: Settings,
     season: str,
@@ -60,6 +72,8 @@ def season_features(
     if gameweeks is None:
         gameweeks = list(range(1, int(live["gameweek"].max()) + 1))
     ep_next = load_ep_next(settings, season, upto=snapshot_gw)
-    feats = features.build_features(live, players, teams, fixtures, gameweeks, ep_next)
+    prior = load_prior(settings, season)
+    feats = features.build_features(live, players, teams, fixtures, gameweeks, ep_next, prior)
     feats.insert(0, "season", season)
+    feats["dc_era"] = float(season >= features.DC_FIRST_SEASON)
     return feats

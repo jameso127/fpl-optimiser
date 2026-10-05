@@ -24,10 +24,11 @@ from predict.data import season_features
 
 FIRST_TEST_GW = 3  # gameweeks 1-2 have almost no in-season form to use
 REGULAR_MINUTES = 60  # "regular" = averaged >= 60 minutes over the previous 5 gameweeks
-CORE_METHODS = ["model", "baseline_l5", "baseline_season"]
-# model_xp = the model with FPL's ep_next as an extra feature. It is only compared on rows
-# that have ep_next, so it appears in the head-to-head tables alongside ep_next itself.
-METHODS = ["model", "model_xp", "baseline_l5", "baseline_season", "ep_next"]
+# model = the current hurdle model; model_v1 = the first single-stage model (kept to show what
+# the rebuild added). ep_next is only compared on rows that have it.
+CORE_METHODS = ["model", "model_v1", "baseline_l5", "baseline_season"]
+METHODS = [*CORE_METHODS, "ep_next"]
+TOP_K = 30  # picks per gameweek for the decision-oriented metric
 
 
 def walk_forward(feats: pd.DataFrame, test_seasons: list[str]) -> pd.DataFrame:
@@ -43,17 +44,17 @@ def walk_forward(feats: pd.DataFrame, test_seasons: list[str]) -> pd.DataFrame:
             test = in_season[in_season["gameweek"] == g]
             if train.empty or test.empty:
                 continue
-            plain = model.train(train, train["target"], features.FEATURES)
-            with_xp = model.train(train, train["target"], features.XP_FEATURES)
+            v1 = model.train(train, train["target"], features.FEATURES)
+            v2 = model.train_v2(train)
             parts.append(
                 test.assign(
-                    model=model.predict(plain, test),
-                    model_xp=model.predict(with_xp, test),
+                    model=model.expected_points(v2, test),
+                    model_v1=model.predict(v1, test),
                     baseline_l5=test["pts_l5"].fillna(0.0),
                     baseline_season=test["pts_season"].fillna(0.0),
                 )[
                     ["season", "id", "gameweek", "target", "min_l5"]
-                    + ["model", "model_xp", "baseline_l5", "baseline_season"]
+                    + ["model", "model_v1", "baseline_l5", "baseline_season"]
                 ]
             )
     return pd.concat(parts, ignore_index=True) if parts else pd.DataFrame()
@@ -102,6 +103,14 @@ def attach_ep_next(preds: pd.DataFrame, settings: Settings) -> pd.DataFrame:
     return preds
 
 
+def top_k_points(df: pd.DataFrame, col: str, k: int = TOP_K) -> float:
+    """Mean actual points of the `k` highest-ranked players each gameweek, averaged over
+    gameweeks: how well the ranking identifies who to pick, which is how the optimiser uses it.
+    """
+    per_gw = [g.nlargest(k, col)["target"].mean() for _, g in df.groupby(["season", "gameweek"])]
+    return float(np.mean(per_gw))
+
+
 def _metrics(df: pd.DataFrame, methods: list[str]) -> pd.DataFrame:
     rows = []
     for m in methods:
@@ -112,7 +121,50 @@ def _metrics(df: pd.DataFrame, methods: list[str]) -> pd.DataFrame:
                 "MAE": err.abs().mean(),
                 "RMSE": float(np.sqrt((err**2).mean())),
                 "Spearman": df[m].corr(df["target"], method="spearman"),
+                f"Top{TOP_K}": top_k_points(df, m),
                 "rows": len(df),
+            }
+        )
+    return pd.DataFrame(rows)
+
+
+ABLATION_STRIDE = 3
+
+
+def ablation(feats: pd.DataFrame, test_season: str, stride: int = ABLATION_STRIDE) -> pd.DataFrame:
+    """Re-score `test_season` (every `stride`th gameweek) with one feature group removed.
+
+    Shows what each group of features is worth. Walk-forward, same training rule as the
+    main backtest.
+    """
+    labelled = features.usable(feats).dropna(subset=["target"])
+    sets = {"full model": features.FEATURES_V2}
+    for name, cols in features.GROUPS.items():
+        sets[f"without {name}"] = [c for c in features.FEATURES_V2 if c not in cols]
+    sets["first model's features only"] = features.FEATURES
+    earlier = labelled[labelled["season"] < test_season]
+    in_season = labelled[labelled["season"] == test_season]
+    parts = []
+    for g in sorted(in_season["gameweek"].unique()):
+        if g < FIRST_TEST_GW or (g - FIRST_TEST_GW) % stride:
+            continue
+        train = pd.concat([earlier, in_season[in_season["gameweek"] < g]])
+        test = in_season[in_season["gameweek"] == g].copy()
+        for name, cols in sets.items():
+            test[name] = model.expected_points(model.train_v2(train, cols), test)
+        parts.append(test)
+    d = pd.concat(parts)
+    regular = d[d["min_l5"] >= REGULAR_MINUTES]
+    rows = []
+    for name in sets:
+        err = regular[name] - regular["target"]
+        rows.append(
+            {
+                "variant": name,
+                "MAE (regular)": err.abs().mean(),
+                "Spearman (regular)": regular[name].corr(regular["target"], method="spearman"),
+                f"Top{TOP_K} (all)": top_k_points(d, name),
+                "Spearman (all)": d[name].corr(d["target"], method="spearman"),
             }
         )
     return pd.DataFrame(rows)
@@ -149,7 +201,12 @@ def _md_table(df: pd.DataFrame) -> str:
     return "\n".join(lines)
 
 
-def render_report(preds: pd.DataFrame, audit: pd.DataFrame | None = None) -> str:
+def render_report(
+    preds: pd.DataFrame,
+    audit: pd.DataFrame | None = None,
+    ablated: pd.DataFrame | None = None,
+    ablated_season: str = "",
+) -> str:
     if preds.empty:
         return "# Backtest\n\nNot enough finished gameweeks to run a walk-forward backtest yet.\n"
 
@@ -176,6 +233,18 @@ def render_report(preds: pd.DataFrame, audit: pd.DataFrame | None = None) -> str
     for title, table in tables.items():
         out += [f"## {title}", "", _md_table(table), ""]
 
+    if ablated is not None and not ablated.empty:
+        out += [
+            f"## What each feature group is worth ({ablated_season}, every {ABLATION_STRIDE}rd "
+            f"gameweek from {FIRST_TEST_GW})",
+            "",
+            "The full model with one group of features removed at a time. A group is only "
+            "worth keeping if removing it makes the full model worse.",
+            "",
+            _md_table(ablated),
+            "",
+        ]
+
     if audit is not None and not audit.empty:
         out += [
             "## Leak audit of stored `ep_next`",
@@ -192,18 +261,10 @@ def render_report(preds: pd.DataFrame, audit: pd.DataFrame | None = None) -> str
     out += ["## Verdict", ""]
     for title, table in tables.items():
         if "head-to-head" in title:
-            out += [
-                _verdict(table, f"{title}: model_xp vs ep_next", "model_xp", ["ep_next"]),
-                _verdict(
-                    table,
-                    f"{title}: model_xp vs the model without ep_next",
-                    "model_xp",
-                    ["model"],
-                ),
-                _verdict(table, f"{title}: model vs ep_next", "model", ["ep_next"]),
-            ]
+            out += [_verdict(table, title, "model", ["ep_next"])]
         else:
-            out += [_verdict(table, title, "model", ["baseline_l5", "baseline_season"])]
+            rivals = ["model_v1", "baseline_l5", "baseline_season"]
+            out += [_verdict(table, title, "model", rivals)]
     if not (preds["ep_next"].notna().any() if "ep_next" in preds.columns else False):
         out += [
             "- FPL's `ep_next` benchmark is **not available** for the tested gameweeks. "
@@ -225,9 +286,14 @@ def render_report(preds: pd.DataFrame, audit: pd.DataFrame | None = None) -> str
         "known before that deadline; the leak audit above re-checks this on every run. An "
         "earlier version of this report used the same-gameweek value and wrongly showed "
         "`ep_next` as a very strong predictor.",
-        "- `model_xp` uses `ep_next` as a feature. Live, `ep_next` comes from our own "
-        "snapshot, taken at ingest time while that gameweek is the next one, so it is a "
-        "genuine pre-deadline value.",
+        "- Injury news (chance of playing) has no history, so the model cannot learn from it; "
+        "live it is applied on top as a multiplier on the chance of playing. The backtest "
+        "therefore cannot measure that adjustment.",
+        "- Rest days use the stored fixtures table (league matches only; no cup or European "
+        "games), so they are a partial congestion signal. Set-piece roles and news text are "
+        "stored from now on but have no history yet, so they are not features.",
+        "- Last season's rates are matched by FPL's stable player `code`; players new to the "
+        "league have none.",
         "- Fixture difficulty and team strengths use end-of-season values for past gameweeks.",
         "- Position and team come from the latest snapshot of each season.",
         "- FPL scoring rules change between seasons (e.g. defensive-contribution points from "
@@ -243,20 +309,25 @@ def _verdict(table: pd.DataFrame, label: str, subject: str, rivals: list[str]) -
     methods = [str(m) for m in table["method"]]
     mae = dict(zip(methods, (float(v) for v in table["MAE"]), strict=True))
     rho = dict(zip(methods, (float(v) for v in table["Spearman"]), strict=True))
+    top = dict(zip(methods, (float(v) for v in table[f"Top{TOP_K}"]), strict=True))
     best_mae = min(rivals, key=lambda m: mae[m])
     best_rho = max(rivals, key=lambda m: rho[m])
+    best_top = max(rivals, key=lambda m: top[m])
+    top_verb = "beats" if top[subject] > top[best_top] else "does NOT beat"
     mae_verb = "beats" if mae[subject] < mae[best_mae] else "does NOT beat"
     rho_verb = "beats" if rho[subject] > rho[best_rho] else "does NOT beat"
     return (
         f"- **{label}**: on MAE `{subject}` {mae_verb} `{best_mae}`, "
         f"{mae[subject]:.3f} vs {mae[best_mae]:.3f}; on Spearman it {rho_verb} "
-        f"`{best_rho}`, {rho[subject]:.3f} vs {rho[best_rho]:.3f}."
+        f"`{best_rho}`, {rho[subject]:.3f} vs {rho[best_rho]:.3f}; on top-{TOP_K} points it "
+        f"{top_verb} `{best_top}`, {top[subject]:.3f} vs {top[best_top]:.3f}."
     )
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Walk-forward backtest")
     parser.add_argument("test_seasons", nargs="*", help="default: the last two seasons stored")
+    parser.add_argument("--no-ablation", action="store_true", help="skip the slower ablation")
     args = parser.parse_args()
 
     settings = get_settings()
@@ -266,7 +337,13 @@ def main() -> None:
     test_seasons = args.test_seasons or with_live[-2:]
     feats = pd.concat([season_features(settings, s) for s in with_live], ignore_index=True)
     preds = attach_ep_next(walk_forward(feats, test_seasons), settings)
-    report = render_report(preds, leak_audit(feats))
+    ablated = None
+    ablated_season = ""
+    if not args.no_ablation:
+        # Ablate the latest test season that has a full set of gameweeks.
+        ablated_season = test_seasons[0] if len(test_seasons) > 1 else test_seasons[-1]
+        ablated = ablation(feats, ablated_season)
+    report = render_report(preds, leak_audit(feats), ablated, ablated_season)
     path = Path("docs/backtest.md")
     path.parent.mkdir(exist_ok=True)
     path.write_text(report, encoding="utf-8")

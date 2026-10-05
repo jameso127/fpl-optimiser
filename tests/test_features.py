@@ -71,25 +71,125 @@ def test_rolling_features_use_only_prior_gameweeks(synthetic: dict[str, pd.DataF
     assert row["games_played"] == 5
 
 
+def _tamper_from_gameweek_5(d: dict[str, pd.DataFrame]) -> dict[str, pd.DataFrame]:
+    """Wreck every outcome from gameweek 5 on: player stats, goals scored, xG."""
+    live = d["live"].copy()
+    late = live["gameweek"] >= 5
+    stat_cols = [c for c in live.columns if c not in ("id", "gameweek")]
+    live.loc[late, stat_cols] = 99.0
+    fixtures = d["fixtures"].copy()
+    scored = fixtures["event"] >= 5
+    fixtures.loc[scored, ["team_h_score", "team_a_score"]] = 9.0
+    return {**d, "live": live, "fixtures": fixtures}
+
+
 def test_changing_gameweek_g_and_later_does_not_change_features_for_g(
     synthetic: dict[str, pd.DataFrame],
 ) -> None:
-    """The leakage guard: features for gameweek 5 must ignore gameweeks 5, 6, 7, 8."""
-    base = _build(synthetic)
-    altered_live = synthetic["live"].copy()
-    late = altered_live["gameweek"] >= 5
-    altered_live.loc[late, ["total_points", "minutes", "bps", "ict_index"]] = 99.0
-    altered = _build(synthetic, altered_live)
+    """The leakage guard: features for gameweek 5 must ignore gameweeks 5, 6, 7, 8.
 
-    cols = features.FEATURES
+    Covers every feature the current model uses: player form, per-90 rates, team and
+    opponent form (which come from fixture results and team xG), rest days and prior season.
+    """
+    base = _build(synthetic)
+    tampered = _tamper_from_gameweek_5(synthetic)
+    altered = _build(tampered)
+
+    cols = features.FEATURES_V2
     pd.testing.assert_frame_equal(
         base[base["gameweek"] == 5][cols].reset_index(drop=True),
         altered[altered["gameweek"] == 5][cols].reset_index(drop=True),
     )
-    # ...while gameweek 6 features legitimately do see the changed gameweek 5.
-    assert not base[base["gameweek"] == 6]["pts_l3"].equals(
-        altered[altered["gameweek"] == 6]["pts_l3"]
+    # ...while gameweek 6 features legitimately do see the changed gameweek 5, in both the
+    # player and the team features.
+    for col in ("pts_l3", "t_gf_l5", "t_xgf_l5", "o_gf_l5"):
+        assert not base[base["gameweek"] == 6][col].equals(altered[altered["gameweek"] == 6][col])
+
+
+def test_per90_and_detail_features_are_computed_from_prior_gameweeks_only(
+    synthetic: dict[str, pd.DataFrame],
+) -> None:
+    feats = _build(synthetic)
+    live = synthetic["live"]
+    row = feats[(feats["id"] == 1) & (feats["gameweek"] == 6)].iloc[0]
+    prior = live[(live["id"] == 1) & live["gameweek"].between(1, 5)]
+
+    assert row["pts90_l5"] == pytest.approx(
+        prior["total_points"].sum() / prior["minutes"].sum() * 90
     )
+    assert (
+        row["pts_l1"] == live[(live["id"] == 1) & (live["gameweek"] == 5)]["total_points"].iloc[0]
+    )
+    assert (
+        row["played_l5"] == 1.0
+        and row["full_l5"]
+        == feats.loc[(feats["id"] == 1) & (feats["gameweek"] == 6), "full_l5"].iloc[0]
+    )
+
+
+def test_rest_days_use_the_previous_match_for_the_team_and_its_opponent() -> None:
+    fixtures = pd.DataFrame(
+        [
+            {"id": 1, "event": 1, "team_h": 1, "team_a": 2, "team_h_difficulty": 3,
+             "team_a_difficulty": 3, "kickoff_time": "2024-08-10T14:00:00Z"},
+            {"id": 2, "event": 2, "team_h": 3, "team_a": 1, "team_h_difficulty": 3,
+             "team_a_difficulty": 3, "kickoff_time": "2024-08-13T14:00:00Z"},
+            {"id": 3, "event": 3, "team_h": 2, "team_a": 1, "team_h_difficulty": 3,
+             "team_a_difficulty": 3, "kickoff_time": "2024-08-30T14:00:00Z"},
+        ]
+    )  # fmt: skip
+    rest = features.rest_days(fixtures).set_index(["team", "gameweek"])
+
+    assert pd.isna(rest.loc[(1, 1), "rest_days"])  # season opener
+    assert rest.loc[(1, 2), "rest_days"] == 3.0
+    assert rest.loc[(1, 3), "rest_days"] == 14.0  # capped (17 days)
+    # Team 3's opponent in gameweek 2 is team 1, who had 3 days; team 2 had 20 in gameweek 3.
+    assert rest.loc[(3, 2), "opp_rest_days"] == 3.0
+    assert rest.loc[(1, 3), "opp_rest_days"] == 14.0  # team 2 last played on 10 Aug (20 days)
+
+
+def test_prior_season_rates_are_keyed_by_code_and_need_enough_minutes() -> None:
+    live = pd.DataFrame(
+        {
+            "id": [1] * 10 + [2] * 10,
+            "gameweek": list(range(1, 11)) * 2,
+            "minutes": [90] * 10 + [10] * 10,
+            "total_points": [4] * 10 + [1] * 10,
+            "expected_goal_involvements": [0.5] * 10 + [0.0] * 10,
+            "starts": [1] * 10 + [0] * 10,
+        }
+    )
+    players = pd.DataFrame({"id": [1, 2], "code": [501, 502]})
+    prior = features.prior_season_rates(live, players).set_index("code")
+
+    assert prior.loc[501, "prev_pts90"] == pytest.approx(4.0)  # 40 points over 900 minutes
+    assert prior.loc[501, "prev_min"] == pytest.approx(90.0)
+    assert prior.loc[501, "prev_starts"] == 10
+    assert pd.isna(prior.loc[502, "prev_pts90"])  # 100 minutes is too few for a rate
+
+
+def test_prior_season_features_attach_by_code_and_stay_constant(
+    synthetic: dict[str, pd.DataFrame],
+) -> None:
+    prior = pd.DataFrame(
+        {
+            "code": [1001, 1002], "prev_pts90": [5.0, 3.0], "prev_min": [80.0, 60.0],
+            "prev_games": [30, 20], "prev_xgi90": [0.4, 0.2], "prev_starts": [28, 15],
+        }
+    )  # fmt: skip
+    feats = features.build_features(
+        synthetic["live"], synthetic["players"], synthetic["teams"], synthetic["fixtures"],
+        list(range(1, 10)), None, prior,
+    )  # fmt: skip
+
+    p1 = feats[feats["id"] == 1]
+    assert (p1["prev_pts90"] == 5.0).all()  # the same in every gameweek of the season
+    assert feats[feats["id"] == 3]["prev_pts90"].isna().all()  # no code match: no prior season
+
+
+def test_previous_season_label() -> None:
+    assert features.previous_season("2025-26") == "2024-25"
+    assert features.previous_season("2000-01") == "1999-00"
 
 
 def test_upcoming_gameweek_has_no_target_but_has_fixture_features(

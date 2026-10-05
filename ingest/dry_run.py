@@ -18,8 +18,10 @@ _PLAYERS = [
 def _bootstrap() -> dict[str, Any]:
     elements = [
         {
-            "id": pid, "web_name": second, "first_name": first, "second_name": second,
-            "team": team, "element_type": pos, "status": "a", "now_cost": cost,
+            "id": pid, "code": 1000 + pid, "web_name": second, "first_name": first,
+            "second_name": second, "team": team, "element_type": pos, "status": "a",
+            "now_cost": cost, "news": "", "penalties_order": None,
+            "corners_and_indirect_freekicks_order": None, "direct_freekicks_order": None,
             "chance_of_playing_this_round": None,
             "chance_of_playing_next_round": 50 if pid == 6 else None,
             "total_points": 10 + pid, "minutes": 180, "form": f"{pid / 2:.1f}",

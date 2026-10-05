@@ -49,7 +49,7 @@ LIVE_STATS = [
 
 MAX_PLAUSIBLE_XP = 20.0
 
-PLAYER_STATIC = ["id", "web_name", "first_name", "second_name", "team", "element_type"]
+PLAYER_STATIC = ["id", "code", "web_name", "first_name", "second_name", "team", "element_type"]
 
 Fetch = Callable[[str], bytes]
 

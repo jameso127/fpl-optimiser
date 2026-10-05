@@ -1,3 +1,7 @@
+> **Out of date.** This report was generated before the model rebuild (hurdle model, team
+> form, rest days, last-season rates). The full re-run was interrupted by low memory; regenerate
+> with `uv run python -m predict.backtest`. Interim head-to-head numbers are in the README.
+
 # Backtest results
 
 Generated 2026-10-04. Walk-forward: each gameweek is scored by a model trained only on earlier seasons plus earlier gameweeks of the same season. Tested: 2025-26 (gameweeks 3-38), 2026-27 (gameweeks 3-5); 29923 player-rows. Lower MAE/RMSE and higher Spearman are better.

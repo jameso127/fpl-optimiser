@@ -3,12 +3,13 @@
 Columns: id, gameweek, xpts (what the optimiser uses), ep_next, xpts_model, availability, fix_n.
 
 `XPTS_SOURCE` picks `xpts`:
-- `ep_next` (default): FPL's own expected points from the players snapshot. Simple, needs no
-  history or model. FPL already folds chance-of-playing and double gameweeks into it
-  (ep_next = form x chance/100, doubled in a double gameweek), so it is used as is; only a
-  blank gameweek is forced to zero.
-- `model`: LightGBM trained on every earlier season plus this season's finished gameweeks,
-  scaled by availability. Kept as an experiment: see docs/backtest.md for how it compares.
+- `model` (default): a hurdle model (chance of playing x points if playing, LightGBM) trained
+  on every earlier season plus this season's finished gameweeks, then scaled by FPL's injury
+  news. See the README and docs/backtest.md for how it compares with `ep_next`.
+- `ep_next`: FPL's own expected points from the players snapshot. Simple, needs no history or
+  model. FPL already folds chance-of-playing and double gameweeks into it (ep_next = form x
+  chance/100, doubled in a double gameweek), so it is used as is; only a blank gameweek is
+  forced to zero.
 
 Re-running overwrites.
 """
@@ -56,9 +57,8 @@ def _model_xpts(settings: Settings, season: str, seasons: list[str], gameweek: i
         raw = to_score["id"].map(ep).fillna(0.0).to_numpy()
         scale: float | pd.Series = 1.0  # ep_next already includes availability
     else:
-        columns = features.XP_FEATURES if settings.use_ep_next else features.FEATURES
-        booster = model.train(train_rows, train_rows["target"], columns)
-        raw = model.predict(booster, to_score)
+        raw = model.expected_points(model.train_v2(train_rows), to_score)
+        # Injury news has no history to learn from, so it scales the chance of playing here.
         scale = to_score["id"].map(model.availability(players))
         log.info(
             "trained",

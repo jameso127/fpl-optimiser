@@ -40,9 +40,12 @@ def _predictions(settings: Settings, gameweek: int = 3) -> pd.DataFrame:
     return read_parquet(settings, gw_path(SEASON, gameweek, "predictions"))
 
 
-def test_default_source_is_fpls_ep_next_used_as_is(tmp_path) -> None:  # type: ignore[no-untyped-def]
-    assert Settings().xpts_source == "ep_next"
-    settings = _ingested(tmp_path)
+def test_default_source_is_the_model() -> None:
+    assert Settings().xpts_source == "model"
+
+
+def test_ep_next_source_uses_fpls_figure_as_is(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    settings = _ingested(tmp_path, xpts_source="ep_next")
     assert run_predict(settings) == 3
     out = _predictions(settings).set_index("id")
 
@@ -57,7 +60,7 @@ def test_default_source_is_fpls_ep_next_used_as_is(tmp_path) -> None:  # type: i
 
 
 def test_ep_next_source_needs_no_history_or_live_data(tmp_path) -> None:  # type: ignore[no-untyped-def]
-    settings = _ingested(tmp_path)
+    settings = _ingested(tmp_path, xpts_source="ep_next")
     for gw in (1, 2):
         (tmp_path / "dry_run" / f"season={SEASON}" / f"gw={gw}" / "live.parquet").unlink()
 
@@ -67,7 +70,7 @@ def test_ep_next_source_needs_no_history_or_live_data(tmp_path) -> None:  # type
 def test_ep_next_source_zeroes_a_blank_gameweek_and_keeps_doubles_as_given(  # type: ignore[no-untyped-def]
     tmp_path,
 ) -> None:
-    settings = _ingested(tmp_path)
+    settings = _ingested(tmp_path, xpts_source="ep_next")
     fixtures = read_parquet(settings, gw_path(SEASON, 3, "fixtures"))
     # Team 1 doubles up; team 4 has no fixture.
     extra = fixtures.iloc[[0]].assign(id=99, team_h=1, team_a=2)
@@ -94,15 +97,6 @@ def test_model_source_scales_by_availability(tmp_path) -> None:  # type: ignore[
     assert (out["xpts"] == out["xpts_model"]).all()
     # The model knows nothing about injury news, so availability is applied on top.
     assert out.loc[6, "availability"] == 0.5
-
-
-def test_ep_next_feature_is_off_by_default_and_switchable(tmp_path) -> None:  # type: ignore[no-untyped-def]
-    assert Settings().use_ep_next is False
-    settings = _ingested(tmp_path, xpts_source="model", use_ep_next=True)
-
-    run_predict(settings)
-    out = _predictions(settings)
-    assert len(out) == 8 and out["xpts"].notna().all()
 
 
 def test_dry_run_never_resolves_to_the_bucket() -> None:
@@ -159,36 +153,83 @@ def test_walk_forward_never_trains_on_the_test_gameweek_or_later(
     synthetic: dict[str, pd.DataFrame], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     feats = _two_season_features(synthetic)
-    seen: list[tuple[pd.DataFrame, list[str] | None]] = []
-    real_train = backtest.model.train
+    seen: list[pd.DataFrame] = []
+    real_v1, real_v2 = backtest.model.train, backtest.model.train_v2
 
-    def spy(x: pd.DataFrame, y: pd.Series, columns: list[str] | None = None):  # type: ignore[no-untyped-def]
-        seen.append((x, columns))
-        return real_train(x, y, columns)
+    def spy_v1(x: pd.DataFrame, y: pd.Series, columns: list[str] | None = None):  # type: ignore[no-untyped-def]
+        seen.append(x)
+        return real_v1(x, y, columns)
 
-    monkeypatch.setattr(backtest.model, "train", spy)
+    def spy_v2(x: pd.DataFrame, columns: list[str] | None = None):  # type: ignore[no-untyped-def]
+        seen.append(x)
+        return real_v2(x, columns)
+
+    monkeypatch.setattr(backtest.model, "train", spy_v1)
+    monkeypatch.setattr(backtest.model, "train_v2", spy_v2)
     preds = backtest.walk_forward(feats, ["2025-26"])
 
     assert sorted(set(preds["gameweek"])) == [3, 4, 5, 6, 7, 8]
     assert set(preds["season"]) == {"2025-26"}
-    assert len(seen) == 12  # a plain model and an ep_next model for each of 6 gameweeks
+    assert len(seen) == 12  # the first model and the current model, for each of 6 gameweeks
     earlier_rows = ((feats["season"] == "2024-25") & (feats["fix_n"] >= 1)).sum()
-    for g, (plain, xp) in zip(range(3, 9), zip(seen[0::2], seen[1::2], strict=True), strict=True):
-        assert plain[1] == features.FEATURES and xp[1] == features.XP_FEATURES
-        for train_x, _ in (plain, xp):
+    for g, pair in zip(range(3, 9), zip(seen[0::2], seen[1::2], strict=True), strict=True):
+        for train_x in pair:
             rows = feats.loc[train_x.index]
             # The earlier season is always fully available; the test season only before g.
             assert (rows["season"] == "2024-25").sum() == earlier_rows
             assert (rows[rows["season"] == "2025-26"]["gameweek"] < g).all()
 
 
-def test_model_using_a_good_ep_next_beats_the_model_without_it(
+def test_backtest_scores_the_current_model_the_first_model_and_baselines(
     synthetic: dict[str, pd.DataFrame],
 ) -> None:
     preds = backtest.walk_forward(_two_season_features(synthetic), ["2025-26"])
-    mae = lambda col: (preds[col] - preds["target"]).abs().mean()  # noqa: E731
 
-    assert mae("model_xp") < mae("model")
+    assert {"model", "model_v1", "baseline_l5", "baseline_season"} <= set(preds.columns)
+    assert preds[["model", "model_v1"]].notna().all().all()
+
+
+def test_ablation_removes_one_feature_group_at_a_time(
+    synthetic: dict[str, pd.DataFrame],
+) -> None:
+    abl = backtest.ablation(_two_season_features(synthetic), "2025-26", stride=3)
+
+    assert list(abl["variant"]) == [
+        "full model",
+        *[f"without {g}" for g in features.GROUPS],
+        "first model's features only",
+    ]
+    assert abl.drop(columns="variant").notna().all().all()
+    report = backtest.render_report(
+        backtest.walk_forward(_two_season_features(synthetic), ["2025-26"]),
+        ablated=abl,
+        ablated_season="2025-26",
+    )
+    assert "What each feature group is worth" in report and "without team_form" in report
+
+
+def test_hurdle_expected_points_is_chance_of_playing_times_points_if_playing(
+    synthetic: dict[str, pd.DataFrame],
+) -> None:
+    # Players 1-10 never play; everyone else always does.
+    never = synthetic["live"]["id"] <= 10
+    synthetic["live"].loc[never, ["minutes", "total_points"]] = 0
+    feats = _two_season_features(synthetic)
+    train = features.usable(feats).dropna(subset=["target"])
+    hurdle = model.train_v2(train)
+    p_play, pts = model.predict_hurdle(hurdle, train)
+
+    assert ((p_play >= 0) & (p_play <= 1)).all()
+    assert np.allclose(model.expected_points(hurdle, train), p_play * pts)
+    benched = train["id"].to_numpy() <= 10
+    assert p_play[benched].mean() < 0.2 < 0.8 < p_play[~benched].mean()
+
+
+def test_recency_weights_decay_by_season_age() -> None:
+    seasons = pd.Series(["2022-23", "2023-24", "2024-25", "2024-25"])
+    w = model.recency_weights(seasons, decay=0.5)
+
+    assert list(w) == [0.25, 0.5, 1.0, 1.0]
 
 
 def test_report_is_honest_about_missing_ep_next(synthetic: dict[str, pd.DataFrame]) -> None:
@@ -210,7 +251,7 @@ def test_ep_next_is_only_scored_on_rows_that_have_it() -> None:
             "target": [2.0, 4.0, 1.0, 5.0],
             "min_l5": 90.0,
             "model": [2.0, 4.0, 1.0, 5.0],
-            "model_xp": [2.0, 4.0, 1.0, 5.0],
+            "model_v1": [2.0, 4.0, 1.0, 5.0],
             "baseline_l5": [1.0, 1.0, 1.0, 1.0],
             "baseline_season": [1.0, 1.0, 1.0, 1.0],
             "ep_next": [None, None, 3.0, 3.0],  # not captured for gameweek 3

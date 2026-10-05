@@ -12,6 +12,13 @@ PLAYER_COLUMNS = [
     "influence", "creativity", "threat", "ict_index",
     "expected_goals", "expected_assists", "expected_goal_involvements",
     "expected_goals_conceded",
+    # Stored from now on so history accumulates (no past-season equivalent exists): a stable
+    # cross-season player id, set-piece roles, injury news and per-90 rates.
+    "code", "penalties_order", "corners_and_indirect_freekicks_order",
+    "direct_freekicks_order", "news", "news_added", "starts", "starts_per_90",
+    "expected_goals_per_90", "expected_assists_per_90", "clean_sheets_per_90",
+    "saves_per_90", "defensive_contribution_per_90", "transfers_in_event",
+    "transfers_out_event", "cost_change_event",
 ]  # fmt: skip
 
 # The API returns these as strings.
@@ -19,6 +26,8 @@ _NUMERIC_STRINGS = [
     "form", "points_per_game", "ep_this", "ep_next", "selected_by_percent",
     "influence", "creativity", "threat", "ict_index", "expected_goals",
     "expected_assists", "expected_goal_involvements", "expected_goals_conceded",
+    "starts_per_90", "expected_goals_per_90", "expected_assists_per_90",
+    "clean_sheets_per_90", "saves_per_90", "defensive_contribution_per_90",
 ]  # fmt: skip
 
 TEAM_COLUMNS = [
