@@ -4,16 +4,12 @@ Scores gameweek n with the model currently promoted in the registry. It never tr
 `train` job does that on its own schedule. Needs only the current season's live data (plus
 last season's rates), so it is quick and light.
 
-Columns: id, gameweek, xpts (what the optimiser uses), ep_next, xpts_model, availability,
-fix_n, model_version.
+The expected points always come from the model (chance of playing x points if playing, scaled
+by FPL's injury news). If no model has been promoted there is nothing to serve, so the job
+fails with a clear message; run the `train` job first.
 
-`XPTS_SOURCE` picks `xpts`:
-- `model` (default): the promoted hurdle model (chance of playing x points if playing), scaled
-  by FPL's injury news. If no model has been promoted yet, falls back to `ep_next` and says
-  so in `model_version` and the logs instead of failing the pipeline.
-- `ep_next`: FPL's own expected points from the players snapshot. FPL already folds
-  chance-of-playing and double gameweeks into it (ep_next = form x chance/100, doubled in a
-  double gameweek), so it is used as is; only a blank gameweek is forced to zero.
+Columns: id, gameweek, xpts (what the optimiser uses), ep_next (FPL's own figure, kept only
+as a benchmark for monitoring, never used for xpts), availability, fix_n, model_version.
 
 Re-running overwrites.
 """
@@ -39,18 +35,22 @@ from ml.data import season_features
 
 log = logging.getLogger(__name__)
 
-EP_NEXT_VERSION = "ep_next"
-FALLBACK_VERSION = "ep_next-fallback"
+
+class NoModelError(RuntimeError):
+    """Raised when there is no promoted model to serve."""
 
 
-def _model_xpts(
+def _score(
     settings: Settings, season: str, gameweek: int, players: pd.DataFrame
-) -> tuple[pd.Series, str] | None:
-    """(expected points per player id, model version) from the promoted model, or None."""
+) -> tuple[pd.Series, str]:
+    """(expected points per player id, model version) from the promoted model."""
     try:
         hurdle, card = registry.load(settings, settings.model_name)
-    except FileNotFoundError:
-        return None
+    except FileNotFoundError as exc:
+        raise NoModelError(
+            f"no promoted model named {settings.model_name!r}: run the train job first "
+            "(it registers a model and promotes it if it passes the gate)"
+        ) from exc
     feats = season_features(
         settings, season, [gameweek], snapshot_gw=gameweek, live_before=gameweek
     )
@@ -58,6 +58,7 @@ def _model_xpts(
     raw = model.expected_points(hurdle, feats)
     # Injury news has no history to learn from, so it scales the chance of playing here.
     scale = feats["id"].map(model.availability(players))
+    # A blank gameweek (no fixture) means no points, whatever the model says.
     xpts = raw * scale * (feats["fix_n"] >= 1)
     log.info("scored", extra={"model_version": card.version, "rows": len(feats)})
     return pd.Series(np.asarray(xpts, dtype=float), index=feats["id"].to_numpy()), card.version
@@ -74,12 +75,7 @@ def run(settings: Settings) -> int:
     gameweek = settings.gameweek or snapshots[-1]
     log.info(
         "predict start",
-        extra={
-            "season": season,
-            "gameweek": gameweek,
-            "xpts_source": settings.xpts_source,
-            "dry_run": settings.dry_run,
-        },
+        extra={"season": season, "gameweek": gameweek, "dry_run": settings.dry_run},
     )
 
     players = read_parquet(settings, gw_path(season, gameweek, "players"))
@@ -88,28 +84,12 @@ def run(settings: Settings) -> int:
     per_team = features.fixture_features(fixtures, teams)
     fix_n = per_team[per_team["gameweek"] == gameweek].set_index("team")["fix_n"]
 
+    xpts, version = _score(settings, season, gameweek, players)
     out = pd.DataFrame({"id": players["id"], "gameweek": gameweek})
+    out["xpts"] = out["id"].map(xpts)
     out["ep_next"] = players["ep_next"].to_numpy()
-    out["fix_n"] = players["team"].map(fix_n).fillna(0).astype(int).to_numpy()
     out["availability"] = out["id"].map(model.availability(players))
-    out["xpts_model"] = np.nan
-    # ep_next already reflects chance of playing and double gameweeks. A blank gameweek has
-    # no fixture, so nothing to score.
-    out["xpts"] = out["ep_next"].fillna(0.0) * (out["fix_n"] >= 1)
-
-    version = EP_NEXT_VERSION
-    if settings.xpts_source == "model":
-        scored = _model_xpts(settings, season, gameweek, players)
-        if scored is None:
-            version = FALLBACK_VERSION
-            log.warning(
-                "no promoted model; using ep_next. Run the train job.",
-                extra={"model_name": settings.model_name},
-            )
-        else:
-            xpts_model, version = scored
-            out["xpts_model"] = out["id"].map(xpts_model)
-            out["xpts"] = out["xpts_model"]
+    out["fix_n"] = players["team"].map(fix_n).fillna(0).astype(int).to_numpy()
     out["model_version"] = version
 
     uri = write_parquet(settings, out, gw_path(season, gameweek, "predictions"))

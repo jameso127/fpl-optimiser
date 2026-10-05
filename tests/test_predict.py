@@ -8,6 +8,7 @@ from ingest.dry_run import DryRunSource
 from ingest.main import run as run_ingest
 from ml import backtest, features, model, registry
 from ml.features import build_features
+from predict.main import NoModelError
 from predict.main import run as run_predict
 from train.main import run as train_run
 
@@ -31,8 +32,8 @@ def test_availability_rules() -> None:
     assert avail.loc[5] == 0.0  # suspended overrides 100
 
 
-def _ingested(tmp_path, **kwargs) -> Settings:  # type: ignore[no-untyped-def]
-    settings = Settings(data_dir=str(tmp_path), dry_run=True, **kwargs)
+def _ingested(tmp_path) -> Settings:  # type: ignore[no-untyped-def]
+    settings = Settings(data_dir=str(tmp_path), dry_run=True)
     run_ingest(settings, DryRunSource())
     return settings
 
@@ -41,64 +42,15 @@ def _predictions(settings: Settings, gameweek: int = 3) -> pd.DataFrame:
     return read_parquet(settings, gw_path(SEASON, gameweek, "predictions"))
 
 
-def test_default_source_is_the_model() -> None:
-    assert Settings().xpts_source == "model"
-
-
-def test_ep_next_source_uses_fpls_figure_as_is(tmp_path) -> None:  # type: ignore[no-untyped-def]
-    settings = _ingested(tmp_path, xpts_source="ep_next")
-    assert run_predict(settings) == 3
-    out = _predictions(settings).set_index("id")
-
-    assert len(out) == 8
-    # FPL's figure already includes chance of playing: player 6 (50%) is NOT scaled again.
-    assert out.loc[6, "availability"] == 0.5
-    assert out.loc[6, "xpts"] == pytest.approx(out.loc[6, "ep_next"])
-    assert (out["xpts"] == out["ep_next"]).all()
-    assert out["xpts_model"].isna().all()
-    # Dry runs stay out of the real data root.
-    assert settings.data_root.endswith("dry_run")
-
-
-def test_ep_next_source_needs_no_history_or_live_data(tmp_path) -> None:  # type: ignore[no-untyped-def]
-    settings = _ingested(tmp_path, xpts_source="ep_next")
-    for gw in (1, 2):
-        (tmp_path / "dry_run" / f"season={SEASON}" / f"gw={gw}" / "live.parquet").unlink()
-
-    assert run_predict(settings) == 3  # nothing to train on, and it does not matter
-
-
-def test_ep_next_source_zeroes_a_blank_gameweek_and_keeps_doubles_as_given(  # type: ignore[no-untyped-def]
-    tmp_path,
-) -> None:
-    settings = _ingested(tmp_path, xpts_source="ep_next")
-    fixtures = read_parquet(settings, gw_path(SEASON, 3, "fixtures"))
-    # Team 1 doubles up; team 4 has no fixture.
-    extra = fixtures[fixtures["event"] == 3].iloc[[0]].assign(id=99, team_h=1, team_a=2)
-    fixtures = pd.concat([fixtures, extra])
-    fixtures = fixtures[~((fixtures["event"] == 3) & (fixtures["team_h"] == 3))]
-    write_parquet(settings, fixtures, gw_path(SEASON, 3, "fixtures"))
-    run_predict(settings)
-    out = _predictions(settings).set_index("id")
-    players = read_parquet(settings, gw_path(SEASON, 3, "players")).set_index("id")
-
-    team1 = players.index[players["team"] == 1]
-    assert (out.loc[team1, "fix_n"] == 2).all()
-    assert (out.loc[team1, "xpts"] == out.loc[team1, "ep_next"]).all()  # not doubled again
-    blank = players.index[players["team"].isin([3, 4])]
-    assert (out.loc[blank, "fix_n"] == 0).all()
-    assert (out.loc[blank, "xpts"] == 0).all()
-
-
 def test_dry_run_never_resolves_to_the_bucket() -> None:
     settings = Settings(data_bucket="real-bucket", dry_run=True)
     assert "real-bucket" not in settings.data_root
 
 
-def test_model_source_serves_the_promoted_model_and_never_trains(  # type: ignore[no-untyped-def]
+def test_predict_serves_the_promoted_model_and_never_trains(  # type: ignore[no-untyped-def]
     tmp_path, monkeypatch
 ) -> None:
-    settings = _ingested(tmp_path, xpts_source="model")
+    settings = _ingested(tmp_path)
     card = train_run(settings)
     assert card.gate is not None and card.gate.promoted
 
@@ -107,17 +59,37 @@ def test_model_source_serves_the_promoted_model_and_never_trains(  # type: ignor
 
     monkeypatch.setattr(model, "train_hurdle", refuse)
     monkeypatch.setattr(model, "train_v2", refuse)
-    run_predict(settings)
+    assert run_predict(settings) == 3
     out = _predictions(settings).set_index("id")
 
+    assert len(out) == 8
     assert (out["model_version"] == card.version).all()
-    assert out["xpts_model"].notna().all() and (out["xpts"] == out["xpts_model"]).all()
+    assert out["xpts"].notna().all()
+    # ep_next is carried only as a benchmark; xpts is the model's own number.
+    assert out["ep_next"].notna().all() and not (out["xpts"] == out["ep_next"]).all()
+    assert settings.data_root.endswith("dry_run")  # dry runs stay out of the real data root
 
 
-def test_model_source_scales_the_chance_of_playing_by_injury_news(  # type: ignore[no-untyped-def]
+def test_predict_fails_with_a_clear_message_when_no_model_is_promoted(  # type: ignore[no-untyped-def]
     tmp_path,
 ) -> None:
-    settings = _ingested(tmp_path, xpts_source="model")
+    settings = _ingested(tmp_path)
+
+    with pytest.raises(NoModelError, match="run the train job first"):
+        run_predict(settings)
+    assert not read_parquet_exists(settings)  # and nothing was written
+
+
+def read_parquet_exists(settings: Settings) -> bool:
+    from common.storage import exists
+
+    return exists(settings, gw_path(SEASON, 3, "predictions"))
+
+
+def test_predict_scales_the_chance_of_playing_by_injury_news(  # type: ignore[no-untyped-def]
+    tmp_path,
+) -> None:
+    settings = _ingested(tmp_path)
     train_run(settings)
     snap = gw_path(SEASON, 3, "players")
     players = read_parquet(settings, snap)
@@ -132,19 +104,29 @@ def test_model_source_scales_the_chance_of_playing_by_injury_news(  # type: igno
     assert half == pytest.approx(full * 0.5)
 
 
-def test_model_source_falls_back_to_ep_next_when_no_model_is_promoted(  # type: ignore[no-untyped-def]
+def test_predict_gives_a_player_with_no_fixture_zero_points(  # type: ignore[no-untyped-def]
     tmp_path,
 ) -> None:
-    settings = _ingested(tmp_path, xpts_source="model")
+    settings = _ingested(tmp_path)
+    train_run(settings)
+    fixtures = read_parquet(settings, gw_path(SEASON, 3, "fixtures"))
+    # Teams 3 and 4 have no fixture in gameweek 3 (a blank gameweek).
+    write_parquet(
+        settings,
+        fixtures[~((fixtures["event"] == 3) & (fixtures["team_h"] == 3))],
+        gw_path(SEASON, 3, "fixtures"),
+    )
     run_predict(settings)
     out = _predictions(settings).set_index("id")
+    teams = read_parquet(settings, gw_path(SEASON, 3, "players")).set_index("id")["team"]
 
-    assert (out["model_version"] == "ep_next-fallback").all()
-    assert (out["xpts"] == out["ep_next"] * (out["fix_n"] >= 1)).all()
+    blank = teams.index[teams.isin([3, 4])]
+    assert (out.loc[blank, "fix_n"] == 0).all() and (out.loc[blank, "xpts"] == 0).all()
+    assert (out.loc[teams.index[teams.isin([1, 2])], "xpts"] > 0).all()
 
 
 def test_serving_stops_if_the_features_no_longer_match_the_model(tmp_path) -> None:  # type: ignore[no-untyped-def]
-    settings = _ingested(tmp_path, xpts_source="model")
+    settings = _ingested(tmp_path)
     card = train_run(settings)
     card.features = [*card.features, "a_feature_the_code_no_longer_builds"]
     registry.update_card(settings, card)

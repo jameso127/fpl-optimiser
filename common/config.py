@@ -1,5 +1,4 @@
 from functools import lru_cache
-from typing import Literal
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -12,8 +11,6 @@ class Settings(BaseSettings):
     dry_run: bool = False
     gameweek: int | None = None
     season: str | None = None  # e.g. "2026-27"; default: derived from the data
-    # Where `xpts` (what the optimiser maximises) comes from: our model, or FPL's own `ep_next`.
-    xpts_source: Literal["ep_next", "model"] = "model"
 
     # Model lifecycle: train once (job `train`), serve many times (job `predict`).
     model_name: str = "xpts-hurdle"

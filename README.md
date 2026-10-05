@@ -25,7 +25,7 @@ is cheap and runs on demand.
 | `ingest/` FPL API -> Parquet; `ingest.history` one-off import of past seasons | done |
 | `ml/` features, model, registry, promotion gate, monitoring, backtest | done |
 | `train/` train, evaluate, register and (if it passes the gate) promote a model | done |
-| `predict/` serve the promoted model (or `ep_next`) | done |
+| `predict/` serve the promoted model | done |
 | `optimise/`, `notify/`, `api/` | not started |
 | `.github/` CI and deploy | not started |
 
@@ -37,8 +37,8 @@ is cheap and runs on demand.
   The players snapshot holds FPL's `ep_next`, which cannot be recovered later and is the
   baseline for backtests.
 - `live`: per-player stats for gameweek `n` once it has finished.
-- `predictions`: per player for gameweek `n`: `xpts` (what the optimiser maximises), `ep_next`,
-  `xpts_model`, `availability`, `fix_n`.
+- `predictions`: per player for gameweek `n`: `xpts` (what the optimiser maximises), `ep_next`
+  (a benchmark only), `availability`, `fix_n`, `model_version`.
 
 Don't use `GAMEWEEK=<past>` to re-snapshot an old gameweek: it would store *today's* players
 data under that gameweek.
@@ -66,7 +66,7 @@ Training and serving are separate jobs with separate lifecycles:
 - **`predict`** loads `latest`, builds features for the current gameweek only, **checks the
   feature schema against the card** (it stops rather than score with misaligned columns), and
   scores. It never trains, runs in seconds, and stamps `model_version` on every prediction. With
-  no promoted model it falls back to `ep_next` and says so.
+  no promoted model it stops with a clear error: run `train` first.
 - **Monitoring** (`ml/monitor.py`, run by `train`): compares the predictions actually served
   with results and with `ep_next`, gameweek by gameweek, into
   `monitoring/season=<s>/live_performance.parquet`, and warns if the served model has lately
@@ -79,11 +79,10 @@ Bucket layout additions: `models/<name>/<version>/...`, `models/<name>/latest.js
 
 ## Expected points
 
-`XPTS_SOURCE=model` (default) serves the promoted hurdle model: chance of playing x points if playing
-(LightGBM), from player form and per-90 rates, team and opponent form, fixtures, rest days and
-last season's rates, scaled by FPL's injury news. `XPTS_SOURCE=ep_next` uses FPL's own figure
-instead: `form x chance_of_playing / 100`, already doubled in a double gameweek, so it is used
-as is. FPL's figure has no fixture awareness, which is the main thing the model adds.
+Expected points always come from the model: chance of playing x points if playing (LightGBM),
+from player form and per-90 rates, team and opponent form, fixtures, rest days and last
+season's rates, scaled by FPL's injury news. FPL's own `ep_next` is kept in the predictions only
+as a benchmark for the backtest and live monitoring; it is never used as the expected points.
 
 ## Local development
 
