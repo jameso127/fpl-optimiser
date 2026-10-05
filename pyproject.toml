@@ -17,9 +17,12 @@ dependencies = [
 predict = ["lightgbm>=4.3"]
 # The optimiser: SciPy's milp, which solves with HiGHS.
 optimise = ["scipy>=1.11"]
+# User storage in production (the in-memory repository needs nothing).
+firestore = ["google-cloud-firestore>=2.16"]
 dev = [
     {include-group = "predict"},
     {include-group = "optimise"},
+    {include-group = "firestore"},
     "pytest>=8",
     "ruff>=0.5",
     "mypy>=1.10",

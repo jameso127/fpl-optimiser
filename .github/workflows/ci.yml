@@ -34,6 +34,30 @@ jobs:
       - name: Pytest
         run: uv run pytest
 
+  firestore-contract:
+    # The same contract tests that run against the in-memory repository, now against the real
+    # Firestore client talking to the emulator (no cloud credentials involved).
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      - run: uv sync --frozen
+      - name: Start the Firestore emulator
+        run: |
+          docker run -d --name firestore -p 8686:8686             gcr.io/google.com/cloudsdktool/google-cloud-cli:emulators             gcloud emulators firestore start --host-port=0.0.0.0:8686
+          for i in $(seq 1 60); do
+            curl -sf http://localhost:8686 > /dev/null && exit 0
+            sleep 2
+          done
+          docker logs firestore
+          exit 1
+      - name: Contract tests against Firestore
+        env:
+          FIRESTORE_EMULATOR_HOST: localhost:8686
+        run: uv run pytest tests/test_users.py -v
+
   plan:
     runs-on: ubuntu-latest
     outputs:

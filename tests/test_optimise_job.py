@@ -142,3 +142,46 @@ def test_the_client_exposes_the_per_manager_endpoints() -> None:
         "/api/entry/9/history/", "/api/entry/9/event/5/picks/", "/api/entry/9/transfers/",
         "/api/element-summary/77/",
     ]  # fmt: skip
+
+
+def test_declared_transfers_change_the_squad_the_advice_starts_from(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    import datetime as dt
+
+    from common.users.models import DeclaredTransfer
+
+    settings = _settings(tmp_path, max_transfers=2)
+    world = dry_run.seed_storage(settings)
+    rows = {int(r["id"]): r for r in world.players.to_dict("records")}
+    owned = set(world.squad)
+    club_count = Counter(int(rows[i]["team"]) for i in owned)
+    sold = next(i for i in world.squad if rows[i]["element_type"] == 3)
+    allowance = world.purchase[sold] + world.bank  # what the manager can spend on his replacement
+    candidates = [
+        i for i, r in rows.items()
+        if r["element_type"] == 3 and i not in owned and int(r["now_cost"]) <= allowance
+        and (club_count[int(r["team"])] < 3 or r["team"] == rows[sold]["team"])
+    ]  # fmt: skip
+    bought = candidates[0]
+    declared = DeclaredTransfer(
+        season=dry_run.SEASON, gameweek=dry_run.GAMEWEEK, out_id=sold, in_id=bought,
+        out_price=world.purchase[sold], in_price=int(rows[bought]["now_cost"]),
+        declared_at=dt.datetime(2026, 10, 9, 8, 0, tzinfo=dt.UTC),
+    )  # fmt: skip
+    rec = run(settings, dry_run.DryRunEntrySource(world), dry_run.TEAM_ID, declared=[declared])
+
+    hold = rec["options"][0]
+    held = {p["id"] for p in hold["starting_xi"] + hold["bench"]}
+    assert bought in held and sold not in held  # the hold option is the squad *after* his move
+    assert rec["planned_transfers"] == 1 and rec["free_transfers"] == 0  # it used the free one
+    text = " ".join(rec["assumptions"])
+    assert "Plus the transfers you told me about" in text and "Free transfers left: 0" in text
+    assert rec["options"][1]["hit_cost"] == 4.0  # any further transfer is now a hit
+
+
+def test_the_assumptions_always_say_what_the_squad_is_based_on(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    _, _, rec = _run(tmp_path)
+
+    assert rec["assumptions"][0].startswith(
+        "Your team as FPL shows it after the gameweek 2 deadline"
+    )
+    assert any(line.startswith("Free transfers left: 1 (estimated)") for line in rec["assumptions"])

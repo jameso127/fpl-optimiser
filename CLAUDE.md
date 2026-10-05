@@ -41,7 +41,9 @@ web -> FastAPI (Cloud Run service) -> reads predictions, runs optimiser per user
 - Shared, expensive work runs once per gameweek (ingest + predict for all players).
 - Per-user work is cheap and on demand: the API fetches a squad by FPL team ID and runs only
   the optimiser against precomputed predictions.
-- Storage is Parquet in GCS (no BigQuery unless asked). Email via Resend;
+- Storage is Parquet in GCS (no BigQuery unless asked). Users (chat id, FPL team id, settings,
+  declared transfers, invites) are in Firestore behind a repository port, with an in-memory
+  implementation for tests. Email via Resend;
   port 25 SMTP is blocked on GCP.
 
 ## Layout

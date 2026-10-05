@@ -10,6 +10,7 @@ which the notify job turns into a message. Re-running overwrites.
 
 import datetime as dt
 import logging
+from collections.abc import Mapping, Sequence
 from typing import Any
 
 import pandas as pd
@@ -18,6 +19,7 @@ from common.config import Settings, get_settings
 from common.fpl_client import FplClient
 from common.logging import configure_logging
 from common.storage import available_gameweeks, available_seasons, gw_path, read_parquet, write_json
+from common.users.models import DeclaredTransfer
 from optimise import dry_run, model, squad
 from optimise.model import POSITION_NAMES, Player, Problem, Solution
 from optimise.squad import EntrySource, Squad
@@ -95,6 +97,29 @@ def _option_json(
     }
 
 
+def assumptions(my_squad: Squad, names: Mapping[int, str]) -> list[str]:
+    """What the advice is based on, in plain words, so a reader can spot a wrong assumption.
+
+    FPL hides a manager's changes for an upcoming gameweek until its deadline, so these lines
+    matter: they tell the user what we know and what we were told.
+    """
+
+    def label(i: int) -> str:
+        return names.get(i, str(i))
+
+    lines = [f"Your team as FPL shows it after the gameweek {my_squad.base_gameweek} deadline."]
+    if my_squad.declared_applied:
+        moves = ", ".join(f"{label(o)} to {label(i)}" for o, i in my_squad.declared_applied)
+        lines.append(f"Plus the transfers you told me about: {moves}.")
+    visible = my_squad.planned_transfers - len(my_squad.declared_applied)
+    if visible > 0:
+        lines.append(f"{visible} transfer(s) for this gameweek are already visible in FPL.")
+    source = "estimated" if my_squad.free_transfers_estimated else "your setting"
+    lines.append(f"Free transfers left: {my_squad.free_transfers} ({source}).")
+    lines.extend(my_squad.notes)
+    return lines
+
+
 def build_recommendation(
     *,
     season: str,
@@ -106,6 +131,7 @@ def build_recommendation(
     options: list[Solution],
     chosen: Solution,
     teams: dict[int, str],
+    names: Mapping[int, str],
     settings: Settings,
 ) -> dict[str, Any]:
     by_id = {p.id: p for p in problem.pool}
@@ -123,11 +149,17 @@ def build_recommendation(
         "max_transfers_considered": settings.max_transfers,
         "min_gain_per_transfer": settings.min_gain_per_transfer,
         "recommended_transfers": chosen.transfers,
+        "assumptions": assumptions(my_squad, names),
         "options": [_option_json(o, by_id, teams, problem, hold) for o in options],
     }
 
 
-def run(settings: Settings, source: EntrySource, team_id: int | None = None) -> dict[str, Any]:
+def run(
+    settings: Settings,
+    source: EntrySource,
+    team_id: int | None = None,
+    declared: Sequence[DeclaredTransfer] = (),
+) -> dict[str, Any]:
     team_id = team_id or settings.fpl_team_id
     if team_id is None:
         raise RuntimeError("set FPL_TEAM_ID to the manager whose team should be optimised")
@@ -150,6 +182,7 @@ def run(settings: Settings, source: EntrySource, team_id: int | None = None) -> 
         raise RuntimeError("no finished gameweek yet: there is no squad to optimise")
 
     market = {int(i): int(c) for i, c in zip(players["id"], players["now_cost"], strict=True)}
+    names = {int(i): str(n) for i, n in zip(players["id"], players["web_name"], strict=True)}
     my_squad = squad.build_squad(
         source,
         team_id,
@@ -158,6 +191,8 @@ def run(settings: Settings, source: EntrySource, team_id: int | None = None) -> 
         next_gameweek=gameweek,
         max_free_transfers=settings.max_free_transfers,
         free_transfers_override=settings.free_transfers_override,
+        declared=declared,
+        names=names,
     )
     xpts = preds.set_index("id")["xpts"]
     pool = build_pool(players, xpts, set(my_squad.player_ids))
@@ -185,6 +220,7 @@ def run(settings: Settings, source: EntrySource, team_id: int | None = None) -> 
         options=options,
         chosen=chosen,
         teams={int(i): str(n) for i, n in zip(teams_df["id"], teams_df["short_name"], strict=True)},
+        names=names,
         settings=settings,
     )
     uri = write_json(settings, rec, recommendation_path(season, gameweek, team_id))

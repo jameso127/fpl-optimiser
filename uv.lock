@@ -551,12 +551,16 @@ dependencies = [
 
 [package.dev-dependencies]
 dev = [
+    { name = "google-cloud-firestore" },
     { name = "lightgbm" },
     { name = "mypy" },
     { name = "pandas-stubs" },
     { name = "pytest" },
     { name = "ruff" },
     { name = "scipy" },
+]
+firestore = [
+    { name = "google-cloud-firestore" },
 ]
 optimise = [
     { name = "scipy" },
@@ -577,6 +581,7 @@ requires-dist = [
 
 [package.metadata.requires-dev]
 dev = [
+    { name = "google-cloud-firestore", specifier = ">=2.16" },
     { name = "lightgbm", specifier = ">=4.3" },
     { name = "mypy", specifier = ">=1.10" },
     { name = "pandas-stubs", specifier = ">=2.2" },
@@ -584,6 +589,7 @@ dev = [
     { name = "ruff", specifier = ">=0.5" },
     { name = "scipy", specifier = ">=1.11" },
 ]
+firestore = [{ name = "google-cloud-firestore", specifier = ">=2.16" }]
 optimise = [{ name = "scipy", specifier = ">=1.11" }]
 predict = [{ name = "lightgbm", specifier = ">=4.3" }]
 
@@ -764,6 +770,23 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/55/71/d6081acadf55d4233271c39860f0d140ef61fbdb4bceb2075e9c2905d947/google_cloud_core-2.8.0.tar.gz", hash = "sha256:365f8e4518ae81c8101b8dea5fc1c32a960badedb8b511f19db2843cbbd285d2", size = 36605, upload-time = "2026-09-29T19:25:59.275Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/12/ed/1b09640a565e5d34d4e517463f65a67a11f9dcdeb6b6e8220f2d06aaf489/google_cloud_core-2.8.0-py3-none-any.whl", hash = "sha256:e235b0952f7ffe7b9c71a4cf96b506d9cfb557e22557c412f0df9b7068b5d007", size = 31048, upload-time = "2026-09-29T19:25:35.361Z" },
+]
+
+[[package]]
+name = "google-cloud-firestore"
+version = "2.34.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "google-api-core", extra = ["grpc"] },
+    { name = "google-auth" },
+    { name = "google-cloud-core" },
+    { name = "grpcio" },
+    { name = "proto-plus" },
+    { name = "protobuf" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/f3/88/a0767470a92ec7a3820a7c3222ff5e14d2e456a49684838a6e18deeaa731/google_cloud_firestore-2.34.0.tar.gz", hash = "sha256:c5dc34c1abab2b2a25bc613e5dae1d2e47ee987e8c0a8c9901b20bde0767052d", size = 672074, upload-time = "2026-10-01T18:16:35.326Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/85/1c/e309d4d636ee0362ed6f50846716d651c37b1d5637a983641ccc9e4025d2/google_cloud_firestore-2.34.0-py3-none-any.whl", hash = "sha256:a75ae79cb2567daae417538dfbfe5d56404754f51483083e43d995b25947d5eb", size = 443714, upload-time = "2026-10-01T18:10:17.877Z" },
 ]
 
 [[package]]

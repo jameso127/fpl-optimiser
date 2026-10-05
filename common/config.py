@@ -1,4 +1,5 @@
 from functools import lru_cache
+from typing import Literal
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -16,6 +17,11 @@ class Settings(BaseSettings):
     model_name: str = "xpts-hurdle"
     holdout_gameweeks: int = 8  # recent finished gameweeks used to evaluate a new model
     git_sha: str | None = None  # stamped on model cards; set by CI/the image build
+
+    # Where users (chat id, FPL team id, settings) live: Firestore in production.
+    users_backend: Literal["firestore", "memory"] = "firestore"
+    gcp_project_id: str | None = None
+    firestore_database: str = "(default)"
 
     # Optimiser: whose team, how many transfers to consider, and how cautious to be.
     fpl_team_id: int | None = None

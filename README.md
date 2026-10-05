@@ -78,6 +78,30 @@ Training and serving are separate jobs with separate lifecycles:
 Bucket layout additions: `models/<name>/<version>/...`, `models/<name>/latest.json` and
 `monitoring/season=<s>/...`, alongside `season=<s>/gw=<n>/...`.
 
+## Users and pending transfers
+
+People use the bot through Telegram. `common/users/` holds who they are: a chat id, a public
+FPL team id, a few settings. There are no names, emails or credentials, and `/delete` removes
+everything.
+
+- **Storage is behind a port** (`UserRepository`), with a Firestore implementation for
+  production and an in-memory one for tests and local runs. One contract test suite runs
+  against both (the Firestore leg uses the emulator in CI), so they cannot drift apart.
+  Operations that must not race (redeeming an invite, claiming a notification so a gameweek is
+  never sent twice) are single atomic methods, tested with concurrent callers.
+- **Registration is by invite code**, so strangers cannot add load on the FPL API or on costs.
+  Declared transfers and invites expire automatically (Firestore TTL).
+- **FPL hides pending changes.** Before a gameweek's deadline, the picks endpoint for it returns
+  404, and the entry summary only shows the last deadline's bank, value and transfer count.
+  So a manager's transfers made since the last deadline are invisible to us. Users therefore
+  tell the bot about transfers they have already made; they are applied on top of the last
+  visible squad with the prices recorded at that moment (cash, selling price, and free
+  transfers all follow). A declared transfer that cannot be true (already visible, selling a
+  player not owned, unaffordable) is ignored with a note instead of corrupting the squad.
+- **Every recommendation lists its assumptions** ("your team as FPL shows it after the
+  gameweek 5 deadline", "plus the transfers you told me about: ...", "free transfers left: 2
+  (estimated)") so a wrong assumption is visible to the reader.
+
 ## Optimiser
 
 `optimise` turns the predictions into advice for one manager (`FPL_TEAM_ID`). For each number

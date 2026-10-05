@@ -187,3 +187,109 @@ def test_selling_a_player_whose_price_fell_gives_back_the_market_price() -> None
 @pytest.mark.parametrize("last_finished", [1, 2, 3])
 def test_free_transfers_before_any_history_is_one(last_finished: int) -> None:
     assert squad.free_transfers_available({"current": [], "chips": []}, 2) == 1
+
+
+# --- transfers the user says they have already made (FPL hides them until the deadline) ----
+import datetime as dt  # noqa: E402
+
+from common.users.models import DeclaredTransfer  # noqa: E402
+
+
+def _declared(
+    out_id: int, in_id: int, out_price: int, in_price: int, minutes: int = 0
+) -> DeclaredTransfer:
+    return DeclaredTransfer(
+        season="2026-27", gameweek=5, out_id=out_id, in_id=in_id,
+        out_price=out_price, in_price=in_price,
+        declared_at=dt.datetime(2026, 10, 9, 8, 0, tzinfo=dt.UTC) + dt.timedelta(minutes=minutes),
+    )  # fmt: skip
+
+
+def _source(history: dict[str, Any] | None = None, transfers: list[dict[str, Any]] | None = None):  # type: ignore[no-untyped-def]
+    prices = {i: 50 for i in SQUAD_IDS} | {20: 50, 21: 50}
+    return FakeSource(
+        history or _history({1: 0, 2: 0, 3: 0}), _picks(bank=7), transfers or [], prices
+    )
+
+
+MARKET = {i: 50 for i in [*SQUAD_IDS, 20, 21]} | {20: 64}
+
+
+def test_a_declared_transfer_changes_the_squad_bank_and_free_transfers() -> None:
+    built = squad.build_squad(
+        _source(), 1, MARKET, last_finished=3, next_gameweek=4,
+        declared=[_declared(2, 20, out_price=55, in_price=60)],
+    )  # fmt: skip
+
+    assert 20 in built.player_ids and 2 not in built.player_ids and len(built.player_ids) == 15
+    assert built.bank == 7 + 55 - 60
+    assert built.selling_prices[20] == squad.selling_price(60, 64) == 62  # paid 6.0m, now 6.4m
+    assert built.planned_transfers == 1 and built.declared_applied == ((2, 20),)
+    # Three free transfers by gameweek 4, one already used by the declared transfer.
+    assert built.free_transfers == 2 and built.free_transfers_estimated is True
+
+
+def test_declared_transfers_apply_in_order_so_they_can_chain() -> None:
+    built = squad.build_squad(
+        _source(), 1, MARKET, 3, 4,
+        declared=[_declared(2, 20, 55, 60, minutes=1), _declared(20, 21, 60, 50, minutes=2)],
+    )  # fmt: skip
+
+    assert 21 in built.player_ids and 20 not in built.player_ids and 2 not in built.player_ids
+    assert built.bank == 7 + (55 - 60) + (60 - 50)
+    assert built.planned_transfers == 2
+
+
+def test_what_the_user_just_paid_overrides_an_older_purchase_of_the_same_player() -> None:
+    old = [_transfer(2, "2026-09-01T10:00:00Z", 9, 20, 40, 50)]  # bought 20 earlier at 5.0m
+    built = squad.build_squad(
+        _source(transfers=old), 1, MARKET, 3, 4, declared=[_declared(2, 20, 55, 60)]
+    )
+
+    assert built.selling_prices[20] == squad.selling_price(60, 64)  # not 50
+
+
+def test_a_transfer_fpl_already_shows_is_not_applied_twice() -> None:
+    shown = [_transfer(4, "2026-10-09T07:00:00Z", 2, 20, 55, 60)]  # visible in the API
+    built = squad.build_squad(
+        _source(transfers=shown), 1, MARKET, 3, 4,
+        declared=[_declared(2, 20, 55, 60)],
+    )  # fmt: skip
+
+    assert built.player_ids.count(20) == 1 and built.declared_applied == ()
+    assert built.planned_transfers == 1 and built.bank == 7 + 55 - 60  # counted once
+    assert any("already visible in your FPL team" in n for n in built.notes)
+
+
+def test_a_declared_transfer_that_cannot_be_true_is_ignored_with_a_note() -> None:
+    names = {2: "Salah", 20: "Palmer", 99: "Haaland", 3: "Saka"}
+    built = squad.build_squad(
+        _source(), 1, MARKET, 3, 4, names=names,
+        declared=[
+            _declared(99, 20, 100, 60, minutes=1),  # sells someone he does not own
+            _declared(2, 3, 55, 50, minutes=2),  # buys someone he already owns
+        ],
+    )  # fmt: skip
+
+    assert built.declared_applied == () and built.bank == 7
+    assert len(built.player_ids) == 15 and set(built.player_ids) == set(SQUAD_IDS)
+    assert any("Haaland is not in your squad" in n for n in built.notes)
+    assert any("Saka is already in your squad" in n for n in built.notes)
+
+
+def test_an_unaffordable_declared_transfer_is_ignored() -> None:
+    built = squad.build_squad(
+        _source(), 1, MARKET, 3, 4, declared=[_declared(2, 20, out_price=50, in_price=90)]
+    )  # 4.0m short of the 0.7m in the bank
+
+    assert built.declared_applied == () and built.bank == 7 and 2 in built.player_ids
+    assert any("could not afford it" in n for n in built.notes)
+
+
+def test_a_free_transfer_override_wins_over_the_estimate() -> None:
+    built = squad.build_squad(
+        _source(), 1, MARKET, 3, 4, free_transfers_override=1,
+        declared=[_declared(2, 20, 55, 60)],
+    )  # fmt: skip
+
+    assert built.free_transfers == 1 and built.free_transfers_estimated is False
