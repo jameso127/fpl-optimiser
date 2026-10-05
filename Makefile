@@ -11,13 +11,15 @@ lint:
 test:
 	uv run pytest
 
-# ingest -> train -> predict -> optimise locally against ./data (notify lands next).
+# ingest -> train -> predict -> optimise -> notify locally against ./data.
+# Needs FPL_TEAM_ID, TELEGRAM_CHAT_ID and TELEGRAM_BOT_TOKEN (see .env.example).
 # In production `train` runs on its own schedule, not every gameweek.
 pipeline:
 	uv run python -m ingest.main
 	uv run python -m train.main
 	uv run python -m predict.main
-	uv run python -m optimise.main   # needs FPL_TEAM_ID
+	uv run python -m optimise.main
+	uv run python -m notify.main
 
 train:
 	uv run python -m train.main

@@ -1,7 +1,7 @@
 # FPL Optimiser: Backend
 
 Python services for a demo project: pulls Fantasy Premier League (FPL) API data, predicts
-expected points per player, optimises squads and transfers, emails recommendations, and
+expected points per player, optimises squads and transfers, sends recommendations on Telegram, and
 serves an API for the React frontend.
 
 **Hard constraint: must stay cheap (target < £2/month on GCP).** Prefer serverless,
@@ -43,8 +43,7 @@ web -> FastAPI (Cloud Run service) -> reads predictions, runs optimiser per user
   the optimiser against precomputed predictions.
 - Storage is Parquet in GCS (no BigQuery unless asked). Users (chat id, FPL team id, settings,
   declared transfers, invites) are in Firestore behind a repository port, with an in-memory
-  implementation for tests. Email via Resend;
-  port 25 SMTP is blocked on GCP.
+  implementation for tests and single-user mode. Notifications go out over the Telegram Bot API.
 
 ## Layout
 
@@ -54,7 +53,7 @@ web -> FastAPI (Cloud Run service) -> reads predictions, runs optimiser per user
 /train      Cloud Run Job: train, evaluate, register and maybe promote a model (own schedule)
 /predict    Cloud Run Job: serve the promoted model -> expected points (never trains)
 /optimise   Optimiser library + Cloud Run Job (squad, transfers, hit penalties)
-/notify     Cloud Run Job: build and send the email
+/notify     Cloud Run Job: format recommendations and send them on Telegram
 /api        FastAPI service
 /common     Shared package (schemas, GCS I/O, config, logging)
 /docs       Architecture diagram, backtest results

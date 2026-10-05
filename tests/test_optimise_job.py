@@ -6,8 +6,8 @@ import pytest
 
 from common.config import Settings
 from common.fpl_client import FplClient
-from common.storage import read_json
-from optimise.main import build_pool, recommendation_path, run
+from common.storage import read_json, recommendation_path
+from optimise.main import build_pool, run
 from tests import fakes
 
 
@@ -164,3 +164,33 @@ def test_the_assumptions_always_say_what_the_squad_is_based_on(tmp_path) -> None
         "Your team as FPL shows it after the gameweek 2 deadline"
     )
     assert any(line.startswith("Free transfers left: 1 (estimated)") for line in rec["assumptions"])
+
+
+def test_the_job_optimises_every_user_and_one_failure_does_not_stop_the_rest(  # type: ignore[no-untyped-def]
+    tmp_path, monkeypatch
+) -> None:
+    import optimise.main as job
+    from common.storage import exists
+    from common.users import InMemoryUserRepository, User
+
+    settings = _settings(tmp_path)
+    world = fakes.seed_storage(settings)
+
+    class Source(fakes.FakeEntrySource):
+        def entry_history(self, team_id: int):  # type: ignore[no-untyped-def]
+            if team_id == 2:
+                raise RuntimeError("FPL is down for this team")
+            return super().entry_history(team_id)
+
+    repo = InMemoryUserRepository()
+    for chat, team in ((10, 1), (20, 2), (30, 3)):
+        repo.save(User(chat_id=chat, fpl_team_id=team))
+    monkeypatch.setattr(job, "get_settings", lambda: settings)
+    monkeypatch.setattr(job, "get_user_repository", lambda s: repo)
+    monkeypatch.setattr(job, "FplClient", lambda s: Source(world))
+
+    with pytest.raises(SystemExit, match="1 user"):
+        job.main()
+
+    for team, expected in ((1, True), (2, False), (3, True)):
+        assert exists(settings, recommendation_path(fakes.SEASON, fakes.GAMEWEEK, team)) is expected

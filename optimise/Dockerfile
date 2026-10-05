@@ -7,9 +7,9 @@ COPY --from=ghcr.io/astral-sh/uv:0.12.5 /uv /usr/local/bin/uv
 WORKDIR /app
 ENV UV_COMPILE_BYTECODE=1 UV_LINK_MODE=copy PYTHONUNBUFFERED=1
 
-# SciPy (HiGHS) only: no LightGBM, so no OpenMP runtime needed.
+# SciPy (HiGHS) and the Firestore client: no LightGBM, so no OpenMP runtime needed.
 COPY pyproject.toml uv.lock ./
-RUN uv sync --frozen --no-dev --group optimise --no-install-project
+RUN uv sync --frozen --no-dev --group optimise --group firestore --no-install-project
 
 COPY common ./common
 COPY optimise ./optimise

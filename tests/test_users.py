@@ -208,3 +208,11 @@ def test_declared_transfers_expire_after_the_retention_period() -> None:
 
 def test_the_factory_gives_memory_when_asked_and_never_touches_firestore() -> None:
     assert isinstance(get_user_repository(Settings(users_backend="memory")), InMemoryUserRepository)
+
+
+def test_single_user_mode_has_just_the_owner() -> None:
+    settings = Settings(users_backend="memory", telegram_chat_id=7, fpl_team_id=99)
+    users = get_user_repository(settings).list_active()
+
+    assert [(u.chat_id, u.fpl_team_id) for u in users] == [(7, 99)]
+    assert get_user_repository(Settings(users_backend="memory")).list_active() == []

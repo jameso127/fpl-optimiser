@@ -18,6 +18,11 @@ def gw_path(season: str, gameweek: int, name: str) -> str:
     return f"season={season}/gw={gameweek}/{name}.parquet"
 
 
+def recommendation_path(season: str, gameweek: int, team_id: int) -> str:
+    """Relative path of one manager's recommendation for a gameweek."""
+    return f"season={season}/gw={gameweek}/recommendations/{team_id}.json"
+
+
 def _uri(settings: Settings, rel_path: str) -> str:
     return f"{settings.data_root.rstrip('/')}/{rel_path}"
 
@@ -50,6 +55,19 @@ def available_gameweeks(settings: Settings, season: str, name: str) -> list[int]
     fs, root = fsspec.core.url_to_fs(settings.data_root.rstrip("/"))
     found = fs.glob(f"{root}/season={season}/gw=*/{name}.parquet")
     return sorted(int(m.group(1)) for p in found if (m := re.search(r"gw=(\d+)", p)))
+
+
+def latest_gameweek(settings: Settings, dataset: str, hint: str) -> tuple[str, int]:
+    """The (season, gameweek) a job should work on: the SEASON/GAMEWEEK settings if given,
+    otherwise the latest one that has `dataset`. `hint` says what to run first if there is none."""
+    seasons = available_seasons(settings)
+    if not seasons:
+        raise RuntimeError(f"no data found; {hint}")
+    season = settings.season or seasons[-1]
+    found = available_gameweeks(settings, season, dataset)
+    if not found:
+        raise RuntimeError(f"no {dataset} for season {season}; {hint}")
+    return season, settings.gameweek or found[-1]
 
 
 def write_bytes(settings: Settings, data: bytes, rel_path: str) -> str:

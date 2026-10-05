@@ -17,9 +17,13 @@ __all__ = [
 
 
 def get_user_repository(settings: Settings) -> UserRepository:
-    """Firestore in production; in-memory for tests and local use."""
+    """Firestore for registered users; in memory for single-user mode, where the only user is
+    the owner named in the settings (TELEGRAM_CHAT_ID and FPL_TEAM_ID)."""
     if settings.users_backend == "memory":
-        return InMemoryUserRepository()
+        repo = InMemoryUserRepository()
+        if settings.telegram_chat_id is not None and settings.fpl_team_id is not None:
+            repo.save(User(chat_id=settings.telegram_chat_id, fpl_team_id=settings.fpl_team_id))
+        return repo
     from google.cloud import firestore
 
     from common.users.firestore import FirestoreUserRepository

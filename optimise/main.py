@@ -18,17 +18,20 @@ import pandas as pd
 from common.config import Settings, get_settings
 from common.fpl_client import FplClient
 from common.logging import configure_logging
-from common.storage import available_gameweeks, available_seasons, gw_path, read_parquet, write_json
+from common.storage import (
+    gw_path,
+    latest_gameweek,
+    read_parquet,
+    recommendation_path,
+    write_json,
+)
+from common.users import get_user_repository
 from common.users.models import DeclaredTransfer
 from optimise import model, squad
 from optimise.model import POSITION_NAMES, Player, Problem, Solution
 from optimise.squad import EntrySource, Squad
 
 log = logging.getLogger(__name__)
-
-
-def recommendation_path(season: str, gameweek: int, team_id: int) -> str:
-    return f"season={season}/gw={gameweek}/recommendations/{team_id}.json"
 
 
 def build_pool(players: pd.DataFrame, xpts: pd.Series, owned: set[int]) -> list[Player]:
@@ -163,14 +166,7 @@ def run(
     team_id = team_id or settings.fpl_team_id
     if team_id is None:
         raise RuntimeError("set FPL_TEAM_ID to the manager whose team should be optimised")
-    seasons = available_seasons(settings)
-    if not seasons:
-        raise RuntimeError("no data found; run ingest and predict first")
-    season = settings.season or seasons[-1]
-    predicted = available_gameweeks(settings, season, "predictions")
-    if not predicted:
-        raise RuntimeError(f"no predictions for season {season}; run predict first")
-    gameweek = settings.gameweek or predicted[-1]
+    season, gameweek = latest_gameweek(settings, "predictions", "run ingest and predict first")
     log.info("optimise start", extra={"season": season, "gameweek": gameweek, "team": team_id})
 
     players = read_parquet(settings, gw_path(season, gameweek, "players"))
@@ -232,9 +228,30 @@ def run(
 
 
 def main() -> None:
+    """Optimise for every active user. One user's failure does not stop the others, but it does
+    make the job fail so that it shows up."""
     settings = get_settings()
     configure_logging(settings.log_level)
-    run(settings, FplClient(settings))
+    repo = get_user_repository(settings)
+    client = FplClient(settings)
+    season, gameweek = latest_gameweek(settings, "predictions", "run ingest and predict first")
+
+    failed = 0
+    for user in repo.list_active():
+        try:
+            personal = settings.model_copy(
+                update={
+                    "max_transfers": user.max_transfers or settings.max_transfers,
+                    "free_transfers_override": user.free_transfers_override,
+                }
+            )
+            declared = repo.declared(user.chat_id, season, gameweek)
+            run(personal, client, user.fpl_team_id, declared)
+        except Exception:
+            failed += 1
+            log.exception("optimise failed", extra={"team": user.fpl_team_id})
+    if failed:
+        raise SystemExit(f"{failed} user(s) failed")
 
 
 if __name__ == "__main__":

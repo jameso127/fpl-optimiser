@@ -1,6 +1,7 @@
 from functools import lru_cache
 from typing import Literal
 
+from pydantic import SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -17,10 +18,14 @@ class Settings(BaseSettings):
     holdout_gameweeks: int = 8  # recent finished gameweeks used to evaluate a new model
     git_sha: str | None = None  # stamped on model cards; set by CI/the image build
 
-    # Where users (chat id, FPL team id, settings) live: Firestore in production.
-    users_backend: Literal["firestore", "memory"] = "firestore"
+    # Where users (chat id, FPL team id, settings) live. "memory" is single-user mode: the one
+    # user is the owner below. "firestore" holds everyone who registered with the bot.
+    users_backend: Literal["firestore", "memory"] = "memory"
     gcp_project_id: str | None = None
     firestore_database: str = "(default)"
+
+    telegram_bot_token: SecretStr | None = None  # a secret: from Secret Manager in production
+    telegram_chat_id: int | None = None  # the owner's chat, used in single-user mode
 
     # Optimiser: whose team, how many transfers to consider, and how cautious to be.
     fpl_team_id: int | None = None

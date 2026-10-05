@@ -21,13 +21,7 @@ import pandas as pd
 
 from common.config import Settings, get_settings
 from common.logging import configure_logging
-from common.storage import (
-    available_gameweeks,
-    available_seasons,
-    gw_path,
-    read_parquet,
-    write_parquet,
-)
+from common.storage import gw_path, latest_gameweek, read_parquet, write_parquet
 from ml import features, model, registry
 from ml.data import season_features
 
@@ -63,14 +57,7 @@ def _score(
 
 
 def run(settings: Settings) -> int:
-    seasons = available_seasons(settings)
-    if not seasons:
-        raise RuntimeError("no data found; run ingest first")
-    season = settings.season or seasons[-1]
-    snapshots = available_gameweeks(settings, season, "players")
-    if not snapshots:
-        raise RuntimeError(f"no players snapshot for season {season}; run ingest first")
-    gameweek = settings.gameweek or snapshots[-1]
+    season, gameweek = latest_gameweek(settings, "players", "run ingest first")
     log.info("predict start", extra={"season": season, "gameweek": gameweek})
 
     players = read_parquet(settings, gw_path(season, gameweek, "players"))
