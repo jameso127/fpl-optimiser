@@ -39,6 +39,7 @@ class Settings(BaseSettings):
     free_transfers_override: int | None = None  # use when the estimate is wrong
 
     fpl_base_url: str = "https://fantasy.premierleague.com/api"
+    fpl_site_url: str = "https://fantasy.premierleague.com"  # the buttons under each message
     fpl_user_agent: str = "fpl-optimiser-demo/0.1"
     fpl_min_interval_seconds: float = 0.5
 

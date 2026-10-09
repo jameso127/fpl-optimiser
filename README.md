@@ -14,7 +14,10 @@ morning of the deadline. It runs on Google Cloud for under £2 a month.
 
 ## What you get
 
-On deadline day, a message like this (from the test data, so the names are placeholders):
+On deadline day: a picture of your recommended team on a pitch (club shirts, expected points,
+fixture difficulty, captain and new signings marked) with an animated effect, then the details
+with buttons straight to FPL's transfer page. The long sections fold away until tapped. As
+text, it reads like this (from the test data, so the names are placeholders):
 
 ```
 ⚽ Gameweek 3

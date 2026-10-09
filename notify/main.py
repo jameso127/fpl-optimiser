@@ -7,11 +7,16 @@ retry can send it.
 The pipeline runs daily, but this only sends when the next deadline is today (UK time);
 FORCE_NOTIFY=true sends anyway.
 
+Each user gets the team drawn on a pitch, captioned with the verdict and with an animated effect,
+then the details with link buttons to FPL. If the picture cannot be drawn, everything is sent as
+text instead: a missing picture must never cost the advice itself.
+
     TELEGRAM_BOT_TOKEN=... TELEGRAM_CHAT_ID=... FPL_TEAM_ID=... uv run python -m notify.main
 """
 
 import datetime as dt
 import logging
+from typing import Any
 
 from common import schedule
 from common.config import Settings, get_settings
@@ -19,10 +24,47 @@ from common.fpl_client import FplClient, FplSource
 from common.logging import configure_logging
 from common.storage import latest_gameweek, read_json, recommendation_path
 from common.users import UserRepository, get_user_repository
-from notify.format import format_recommendation
-from notify.telegram import Sender, TelegramSender
+from notify.format import details, format_recommendation, summary
+from notify.pitch import draw_pitch
+from notify.telegram import EFFECTS, Button, Sender, TelegramSender
 
 log = logging.getLogger(__name__)
+
+
+def buttons(settings: Settings) -> list[list[Button]]:
+    site = settings.fpl_site_url.rstrip("/")
+    return [[("🔁 Make transfers", f"{site}/transfers"), ("👕 Pick team", f"{site}/my-team")]]
+
+
+def effect_for(rec: dict[str, Any]) -> str:
+    """Fire when there are transfers to make, a thumbs up when holding is the advice."""
+    return EFFECTS["fire"] if rec["recommended_transfers"] else EFFECTS["thumbs_up"]
+
+
+def send_recommendation(
+    settings: Settings,
+    sender: Sender,
+    chat_id: int,
+    rec: dict[str, Any],
+    deadline: dt.datetime | None,
+) -> None:
+    try:
+        png: bytes | None = draw_pitch(rec, deadline)
+    except Exception:
+        png = None
+        log.exception("could not draw the pitch, sending text only")
+    if png is not None:
+        sender.send_photo(chat_id, png, summary(rec, deadline), effect_id=effect_for(rec))
+        messages = details(rec)
+    else:
+        messages = format_recommendation(rec, deadline)
+    for i, message in enumerate(messages):
+        sender.send(
+            chat_id,
+            message,
+            buttons=buttons(settings) if i == len(messages) - 1 else (),
+            effect_id=effect_for(rec) if png is None and i == 0 else None,
+        )
 
 
 def next_deadline(source: FplSource, now: dt.datetime) -> schedule.Schedule | None:
@@ -59,8 +101,7 @@ def run(
             log.info("already notified", extra={"gameweek": gameweek})
             continue
         try:
-            for message in format_recommendation(rec, deadline):
-                sender.send(user.chat_id, message)
+            send_recommendation(settings, sender, user.chat_id, rec, deadline)
         except Exception:
             repo.release_notification(user.chat_id, season, gameweek)
             failed += 1

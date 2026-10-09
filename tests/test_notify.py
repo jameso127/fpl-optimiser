@@ -1,19 +1,31 @@
 import datetime as dt
+import io
 import json
+from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
 import httpx
 import pytest
+from PIL import Image
 from pydantic import SecretStr
 
+import notify.main
 import notify.telegram as telegram
 from common.config import Settings
 from common.users import InMemoryUserRepository, User
-from notify.format import format_recommendation
-from notify.main import next_deadline
+from notify.format import (
+    CAPTION_LENGTH,
+    details,
+    fixtures_text,
+    format_recommendation,
+    pick,
+    summary,
+)
+from notify.main import next_deadline, send_recommendation
 from notify.main import run as notify_run
-from notify.telegram import MAX_LENGTH, TelegramError, TelegramSender
+from notify.pitch import draw_pitch
+from notify.telegram import EFFECTS, MAX_LENGTH, Button, TelegramError, TelegramSender
 from optimise.main import run as optimise_run
 from tests import fakes
 
@@ -21,14 +33,38 @@ TOKEN = "123456:secret-token"
 
 
 class RecordingSender:
+    """Records every message (photo captions included) as (chat id, text), plus the extras."""
+
     def __init__(self, fail_for: set[int] | None = None) -> None:
         self.sent: list[tuple[int, str]] = []
+        self.photos: list[bytes] = []
+        self.buttons: list[Sequence[Sequence[Button]]] = []
+        self.effects: list[str | None] = []
         self.fail_for = fail_for or set()
 
-    def send(self, chat_id: int, text: str) -> None:
+    def send(
+        self,
+        chat_id: int,
+        text: str,
+        *,
+        buttons: Sequence[Sequence[Button]] = (),
+        effect_id: str | None = None,
+    ) -> None:
         if chat_id in self.fail_for:
             raise TelegramError("boom")
         self.sent.append((chat_id, text))
+        self.buttons.append(buttons)
+        self.effects.append(effect_id)
+
+    def send_photo(
+        self, chat_id: int, png: bytes, caption: str, *, effect_id: str | None = None
+    ) -> None:
+        if chat_id in self.fail_for:
+            raise TelegramError("boom")
+        self.photos.append(png)
+        self.sent.append((chat_id, caption))
+        self.buttons.append(())
+        self.effects.append(effect_id)
 
 
 @pytest.fixture
@@ -59,6 +95,23 @@ def test_a_recommendation_becomes_readable_messages(settings: Settings, world: f
     assert all(len(m) <= MAX_LENGTH for m in messages)
 
 
+def test_the_summary_fits_a_photo_caption(settings: Settings, world: fakes.World) -> None:
+    rec = _recommend(settings, world, fakes.TEAM_ID)
+    caption = summary(rec, dt.datetime(2025, 8, 29, 17, 30, tzinfo=dt.UTC))
+
+    assert len(caption) <= CAPTION_LENGTH
+    assert "Gameweek" in caption and "Captain" in caption
+
+
+def test_long_sections_are_folded_away(settings: Settings, world: fakes.World) -> None:
+    rec = _recommend(settings, world, fakes.TEAM_ID)
+    text = "\n".join(details(rec))
+
+    for title in ("🔎 Starting XI", "📊 Every option", "ℹ️ Based on"):
+        assert f"<blockquote expandable><b>{title}" in text
+    assert text.count("<blockquote expandable>") == text.count("</blockquote>") == 3
+
+
 def test_the_deadline_is_shown_in_uk_time(settings: Settings, world: fakes.World) -> None:
     rec = _recommend(settings, world, fakes.TEAM_ID)
     deadline = dt.datetime(2025, 8, 29, 17, 30, tzinfo=dt.UTC)  # 18:30 BST
@@ -67,14 +120,57 @@ def test_the_deadline_is_shown_in_uk_time(settings: Settings, world: fakes.World
     assert "Deadline" not in format_recommendation(rec)[0]
 
 
-def test_team_table_rows_fit_a_phone_screen(settings: Settings, world: fakes.World) -> None:
-    rec = _recommend(settings, world, fakes.TEAM_ID)
-    rec["options"][0]["starting_xi"][0]["name"] = "Alexander-Arnold-Longname"
-    text = "\n".join(format_recommendation({**rec, "recommended_transfers": 0}))
-    tables = [t.split("</pre>")[0] for t in text.split("<pre>")[1:]]
+def _with_stats(rec: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
+    """The recommendation, set to make its first transfer option, with stats on that move."""
+    option = next(o for o in rec["options"] if o["transfers"] > 0)
+    move = option["moves"][0]
+    move["in"].update(
+        fixtures=[{"opponent": "ARS", "home": False, "difficulty": 4}], form=6.2, ownership=23.4
+    )
+    move["out"].update(chance_of_playing=25.0, news="Hamstring injury")
+    return {**rec, "recommended_transfers": option["transfers"]}, move
 
-    assert "Alexander-Ar…" in text
-    assert all(len(row) <= 30 for table in tables for row in table.split("\n"))
+
+def test_transfers_show_the_fixture_form_and_injury_news(
+    settings: Settings, world: fakes.World
+) -> None:
+    rec, move = _with_stats(_recommend(settings, world, fakes.TEAM_ID))
+    text = "\n".join(details(rec))
+
+    assert "🟠 ARS (A) · form 6.2 · 23% owned" in text
+    assert f"🚑 {move['out']['name']} 25%: Hamstring injury" in text
+
+
+def test_doubtful_players_in_the_team_are_flagged(settings: Settings, world: fakes.World) -> None:
+    rec = _recommend(settings, world, fakes.TEAM_ID)
+    best = pick(rec)
+    best["bench"][0].update(chance_of_playing=75.0, news="Knock")
+    text = "\n".join(details(rec))
+
+    assert "Fitness doubts" in text and f"{best['bench'][0]['name']} 75%: Knock" in text
+    assert "no game" not in text  # fixtures unknown here: nothing is said about them
+
+
+def test_a_blank_gameweek_says_no_game() -> None:
+    assert fixtures_text({"fixtures": []}) == "no game"
+    assert fixtures_text({}) == ""
+    double = {"fixtures": [{"opponent": "LIV", "home": True, "difficulty": 5},
+                           {"opponent": "BOU", "home": False, "difficulty": 2}]}  # fmt: skip
+    assert fixtures_text(double) == "🔴 LIV (H), 🟢 BOU (A)"
+
+
+# --- the picture ------------------------------------------------------------------------------
+
+
+def test_the_team_is_drawn_as_a_png(settings: Settings, world: fakes.World) -> None:
+    rec, _ = _with_stats(_recommend(settings, world, fakes.TEAM_ID))
+    pick(rec)["starting_xi"][0]["name"] = "João Pedro-Guéhi Extraordinaire"  # accents, too long
+
+    png = draw_pitch(rec, dt.datetime(2025, 8, 29, 17, 30, tzinfo=dt.UTC))
+    image = Image.open(io.BytesIO(png))
+
+    assert image.format == "PNG" and image.size == (1080, 1350)
+    assert draw_pitch({**rec, "recommended_transfers": 0})[:4] == b"\x89PNG"  # hold, no deadline
 
 
 def test_the_verdict_says_hold_or_how_many_transfers(
@@ -116,8 +212,9 @@ def test_long_recommendations_are_split_without_breaking_a_block(
 
     assert len(messages) > 1
     assert all(len(m) <= MAX_LENGTH for m in messages)
-    for m in messages:
-        assert m.count("<pre>") == m.count("</pre>")
+    for m in messages:  # a folded section split across messages is re-opened in each one
+        assert m.count("<blockquote expandable>") == m.count("</blockquote>")
+        assert m.count("<b>") == m.count("</b>")
 
 
 # --- the Telegram client ----------------------------------------------------------------------
@@ -172,7 +269,83 @@ def test_errors_never_contain_the_bot_token() -> None:
     assert TOKEN not in repr(Settings(telegram_bot_token=SecretStr(TOKEN)))
 
 
+def test_buttons_and_effect_are_sent_with_the_message() -> None:
+    seen: list[dict[str, Any]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(json.loads(request.content))
+        return httpx.Response(200, json={"ok": True})
+
+    _sender(handler).send(1, "x", buttons=[[("FPL", "https://example.org/t")]], effect_id="42")
+
+    assert seen[0]["reply_markup"] == {
+        "inline_keyboard": [[{"text": "FPL", "url": "https://example.org/t"}]]
+    }
+    assert seen[0]["message_effect_id"] == "42"
+
+
+def test_a_photo_is_uploaded_with_its_caption() -> None:
+    seen: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        return httpx.Response(200, json={"ok": True})
+
+    _sender(handler).send_photo(7, b"\x89PNG-bytes", "<b>GW 3</b>")
+    body = seen[0].read()
+
+    assert seen[0].url.path == f"/bot{TOKEN}/sendPhoto"
+    assert b"\x89PNG-bytes" in body and b"<b>GW 3</b>" in body and b'name="chat_id"' in body
+
+
+def test_an_unknown_effect_is_dropped_not_the_message() -> None:
+    bodies: list[dict[str, Any]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        body = json.loads(request.content)
+        bodies.append(body)
+        if "message_effect_id" in body:
+            return httpx.Response(400, json={"description": "Bad Request: EFFECT_ID_INVALID"})
+        return httpx.Response(200, json={"ok": True})
+
+    _sender(handler).send(1, "x", effect_id="nope")
+
+    assert len(bodies) == 2 and "message_effect_id" not in bodies[1]
+
+
 # --- the job ----------------------------------------------------------------------------------
+
+
+def test_the_picture_comes_first_then_the_details_with_buttons(
+    settings: Settings, world: fakes.World
+) -> None:
+    rec = _recommend(settings, world, fakes.TEAM_ID)
+    sender = RecordingSender()
+
+    send_recommendation(settings, sender, 1, rec, None)
+
+    assert len(sender.photos) == 1 and sender.sent[0][1] == summary(rec)
+    assert sender.effects[0] in (EFFECTS["fire"], EFFECTS["thumbs_up"])
+    assert sender.effects[1:] == [None] * (len(sender.sent) - 1)
+    assert sender.buttons[-1][0][0][1] == "https://fantasy.premierleague.com/transfers"
+    assert all(not b for b in sender.buttons[:-1])
+
+
+def test_without_a_picture_everything_is_sent_as_text(
+    settings: Settings, world: fakes.World, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def broken(*args: Any) -> bytes:
+        raise OSError("no font")
+
+    monkeypatch.setattr(notify.main, "draw_pitch", broken)
+    rec = _recommend(settings, world, fakes.TEAM_ID)
+    sender = RecordingSender()
+
+    send_recommendation(settings, sender, 1, rec, None)
+
+    assert sender.photos == []
+    assert [text for _, text in sender.sent] == format_recommendation(rec)
+    assert sender.effects[0] is not None and sender.buttons[-1]
 
 
 def _repo(*users: User) -> InMemoryUserRepository:

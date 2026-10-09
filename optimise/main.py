@@ -10,6 +10,7 @@ which the notify job turns into a message. Re-running overwrites.
 
 import datetime as dt
 import logging
+import math
 from collections.abc import Mapping, Sequence
 from typing import Any
 
@@ -19,6 +20,7 @@ from common.config import Settings, get_settings
 from common.fpl_client import FplClient
 from common.logging import configure_logging
 from common.storage import (
+    exists,
     gw_path,
     latest_gameweek,
     read_parquet,
@@ -54,7 +56,63 @@ def build_pool(players: pd.DataFrame, xpts: pd.Series, owned: set[int]) -> list[
     return pool
 
 
-def _player_json(p: Player, teams: dict[int, str], captain: int, vice: int) -> dict[str, Any]:
+def _number(value: Any) -> float | None:
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    return None if math.isnan(number) else number
+
+
+def player_stats(
+    players: pd.DataFrame, fixtures: pd.DataFrame | None, teams: Mapping[int, str], gameweek: int
+) -> dict[int, dict[str, Any]]:
+    """Context for each player card: this gameweek's fixtures and FPL's own numbers (form,
+    ownership, injury news). Every field is optional: a missing column, or no fixtures file,
+    just leaves it out, and a blank gameweek is an empty fixture list."""
+    games: dict[int, list[dict[str, Any]]] = {}
+    if fixtures is not None:
+        for f in fixtures[fixtures["event"] == gameweek].to_dict("records"):
+            home, away = int(f["team_h"]), int(f["team_a"])
+            for team, opponent, at_home, fdr in (
+                (home, away, True, f["team_h_difficulty"]),
+                (away, home, False, f["team_a_difficulty"]),
+            ):
+                games.setdefault(team, []).append(
+                    {
+                        "opponent": teams.get(opponent, str(opponent)),
+                        "home": at_home,
+                        "difficulty": int(fdr),
+                    }
+                )
+    stats: dict[int, dict[str, Any]] = {}
+    for row in players.to_dict("records"):
+        extra: dict[str, Any] = {}
+        if fixtures is not None:
+            extra["fixtures"] = games.get(int(row["team"]), [])
+        for key, column in (
+            ("form", "form"),
+            ("ownership", "selected_by_percent"),
+            ("total_points", "total_points"),
+            ("chance_of_playing", "chance_of_playing_next_round"),
+        ):
+            value = _number(row.get(column))
+            if value is not None:
+                extra[key] = value
+        news = row.get("news")
+        if isinstance(news, str) and news.strip():
+            extra["news"] = news.strip()
+        stats[int(row["id"])] = extra
+    return stats
+
+
+def _player_json(
+    p: Player,
+    teams: dict[int, str],
+    captain: int,
+    vice: int,
+    stats: Mapping[int, dict[str, Any]],
+) -> dict[str, Any]:
     return {
         "id": p.id,
         "name": p.name,
@@ -64,27 +122,32 @@ def _player_json(p: Player, teams: dict[int, str], captain: int, vice: int) -> d
         "price": p.price / 10,
         "captain": p.id == captain,
         "vice_captain": p.id == vice,
+        **stats.get(p.id, {}),
     }
 
 
 def _option_json(
-    option: Solution, by_id: dict[int, Player], teams: dict[int, str], problem: Problem, hold: float
+    option: Solution,
+    by_id: dict[int, Player],
+    teams: dict[int, str],
+    problem: Problem,
+    hold: float,
+    stats: Mapping[int, dict[str, Any]],
 ) -> dict[str, Any]:
+    def card(i: int, captain: int = -1, vice: int = -1) -> dict[str, Any]:
+        return _player_json(by_id[i], teams, captain, vice, stats)
+
     def cards(ids: tuple[int, ...]) -> list[dict[str, Any]]:
-        return [_player_json(by_id[i], teams, option.captain, option.vice_captain) for i in ids]
+        return [card(i, option.captain, option.vice_captain) for i in ids]
 
     moves = []
     for out_id, in_id in zip(option.transfers_out, option.transfers_in, strict=False):
-        sold, bought = by_id[out_id], by_id[in_id]
         moves.append(
             {
-                "out": {
-                    **_player_json(sold, teams, -1, -1),
-                    "sell_price": problem.selling_prices[out_id] / 10,
-                },
-                "in": _player_json(bought, teams, -1, -1),
+                "out": {**card(out_id), "sell_price": problem.selling_prices[out_id] / 10},
+                "in": card(in_id),
             }
-        )  # fmt: skip
+        )
     return {
         "transfers": option.transfers,
         "hit_cost": option.hit_cost,
@@ -136,8 +199,10 @@ def build_recommendation(
     teams: dict[int, str],
     names: Mapping[int, str],
     settings: Settings,
+    stats: Mapping[int, dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     by_id = {p.id: p for p in problem.pool}
+    stats = stats or {}
     hold = next(o for o in options if o.transfers == 0).net_xpts
     return {
         "season": season,
@@ -153,7 +218,7 @@ def build_recommendation(
         "min_gain_per_transfer": settings.min_gain_per_transfer,
         "recommended_transfers": chosen.transfers,
         "assumptions": assumptions(my_squad, names),
-        "options": [_option_json(o, by_id, teams, problem, hold) for o in options],
+        "options": [_option_json(o, by_id, teams, problem, hold, stats) for o in options],
     }
 
 
@@ -206,6 +271,9 @@ def run(
         if "model_version" in preds
         else []
     )
+    teams = {int(i): str(n) for i, n in zip(teams_df["id"], teams_df["short_name"], strict=True)}
+    fixtures_rel = gw_path(season, gameweek, "fixtures")
+    fixtures = read_parquet(settings, fixtures_rel) if exists(settings, fixtures_rel) else None
     rec = build_recommendation(
         season=season,
         gameweek=gameweek,
@@ -215,9 +283,10 @@ def run(
         problem=problem,
         options=options,
         chosen=chosen,
-        teams={int(i): str(n) for i, n in zip(teams_df["id"], teams_df["short_name"], strict=True)},
+        teams=teams,
         names=names,
         settings=settings,
+        stats=player_stats(players, fixtures, teams, gameweek),
     )
     uri = write_json(settings, rec, recommendation_path(season, gameweek, team_id))
     log.info(

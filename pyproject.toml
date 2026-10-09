@@ -19,10 +19,13 @@ predict = ["lightgbm>=4.3"]
 optimise = ["scipy>=1.11"]
 # User storage in production (the in-memory repository needs nothing).
 firestore = ["google-cloud-firestore>=2.16"]
+# Draws the team-on-a-pitch picture sent with each notification.
+notify = ["pillow>=11"]
 dev = [
     {include-group = "predict"},
     {include-group = "optimise"},
     {include-group = "firestore"},
+    {include-group = "notify"},
     "pytest>=8",
     "ruff>=0.5",
     "mypy>=1.10",
