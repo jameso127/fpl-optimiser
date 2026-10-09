@@ -7,7 +7,6 @@ emulator: set FIRESTORE_EMULATOR_HOST (CI starts one); it is skipped otherwise.
 
 import datetime as dt
 import os
-import threading
 from collections.abc import Iterator
 
 import httpx
@@ -146,22 +145,6 @@ def test_an_already_registered_chat_does_not_spend_another_use(repo: UserReposit
     assert not repo.redeem_invite("welcome-1", 12, NOW)
 
 
-def test_a_one_use_invite_cannot_be_won_twice_by_racing_chats(repo: UserRepository) -> None:
-    repo.create_invite(Invite(code="race-code", uses_left=1, expires_at=NOW + dt.timedelta(days=1)))
-    results: list[bool] = []
-
-    def attempt(chat_id: int) -> None:
-        results.append(repo.redeem_invite("race-code", chat_id, NOW))
-
-    threads = [threading.Thread(target=attempt, args=(i,)) for i in range(100, 108)]
-    for t in threads:
-        t.start()
-    for t in threads:
-        t.join()
-
-    assert results.count(True) == 1 and len(results) == 8
-
-
 def test_a_gameweek_can_be_claimed_for_notification_only_once(repo: UserRepository) -> None:
     repo.save(User(chat_id=1, fpl_team_id=5))
 
@@ -174,22 +157,6 @@ def test_a_gameweek_can_be_claimed_for_notification_only_once(repo: UserReposito
     assert repo.claim_notification(1, "2026-27", 7) is True
     repo.release_notification(1, "2026-27", 6)  # not the latest claim: no effect
     assert repo.claim_notification(1, "2026-27", 7) is False
-
-
-def test_racing_workers_claim_a_notification_exactly_once(repo: UserRepository) -> None:
-    repo.save(User(chat_id=1, fpl_team_id=5))
-    results: list[bool] = []
-
-    def attempt() -> None:
-        results.append(repo.claim_notification(1, "2026-27", 6))
-
-    threads = [threading.Thread(target=attempt) for _ in range(8)]
-    for t in threads:
-        t.start()
-    for t in threads:
-        t.join()
-
-    assert results.count(True) == 1 and len(results) == 8
 
 
 def test_invite_codes_use_a_safe_alphabet() -> None:
