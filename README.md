@@ -17,28 +17,37 @@ morning of the deadline. It runs on Google Cloud for under £2 a month.
 On deadline day, a message like this (from the test data, so the names are placeholders):
 
 ```
-Gameweek 3
-Make 1 transfer: +2.3 points (no hit).
+⚽ Gameweek 3
+⏰ Deadline Fri 29 Aug, 18:30 UK
 
-Transfers
-OUT P45 (C05, £10.0m)
-IN  P71 (C08, £10.5m)
+✅ Make 1 transfer for +2.3 pts expected (no hit).
 
-Starting XI (xPts)
-GK  P64               C08   2.3
-DEF P47               C06   2.3
+🔁 Transfers
+1. P45 ➜ P71  +1.2 pts
+     C05 £10.0m ➜ C08 £10.5m
+💰 Bank after: £0.0m
+
+🎖 Captain P71 · 7.0 xPts ×2
+     Vice: P44
+
+📋 Starting XI · 39.0 xPts
+GK  P64             C08  2.3
+DEF P47             C06  2.3
 ...
-FWD P71 (C)           C08   7.0
-FWD P44 (V)           C05   4.0
-Bench: P28, P58, P88, P03
+FWD P71          *C C08  7.0
+FWD P44           V C05  4.0
+C captain · V vice · * new signing
+🪑 Bench: P28, P58, P88, P03
 
-All options
-hold: 36.8 pts (+0.0)
-1 transfer: 39.0 pts (+2.3)
-2 transfers: 39.1 pts, -4 hit (+2.4)
-3 transfers: 36.5 pts, -8 hit (-0.2)
+📊 Every option
+  Moves Hit   xPts   Gain
+  hold        36.8   +0.0
+> 1           39.0   +2.3
+  2      -4   39.1   +2.4
+  3      -8   36.5   -0.2
+> = recommended. Each transfer must add at least 0.5 pts to be worth it.
 
-Based on
+ℹ️ Based on
 • Your team as FPL shows it after the gameweek 2 deadline.
 • Free transfers left: 1 (estimated).
 ```
