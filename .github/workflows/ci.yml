@@ -1,12 +1,11 @@
 name: ci
 
-# Every pull request (and pushes to dev): lint, types, tests, and a docker build of every
-# component that changed. Nothing is pushed and no cloud credentials are used.
+# Every commit on a pull request: lint, types, tests, and a docker build of every component
+# that changed. Nothing is pushed and no cloud credentials are used. It does not run again after
+# the merge: the pull request already checked that code, and deploy.yml takes over on main.
 
 on:
   pull_request:
-  push:
-    branches: [dev]
 
 permissions:
   contents: read
