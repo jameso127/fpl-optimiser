@@ -11,7 +11,7 @@ import notify.telegram as telegram
 from common.config import Settings
 from common.users import InMemoryUserRepository, User
 from notify.format import format_recommendation
-from notify.main import deadline_today
+from notify.main import next_deadline
 from notify.main import run as notify_run
 from notify.telegram import MAX_LENGTH, TelegramError, TelegramSender
 from optimise.main import run as optimise_run
@@ -54,9 +54,27 @@ def test_a_recommendation_becomes_readable_messages(settings: Settings, world: f
     text = "\n".join(messages)
 
     assert f"Gameweek {fakes.GAMEWEEK}" in text
-    assert "Starting XI" in text and "(C)" in text and "Bench:" in text
-    assert "All options" in text and "Free transfers left" in text
+    assert "Starting XI" in text and "Captain" in text and "Bench:" in text
+    assert "Every option" in text and "Free transfers left" in text
     assert all(len(m) <= MAX_LENGTH for m in messages)
+
+
+def test_the_deadline_is_shown_in_uk_time(settings: Settings, world: fakes.World) -> None:
+    rec = _recommend(settings, world, fakes.TEAM_ID)
+    deadline = dt.datetime(2025, 8, 29, 17, 30, tzinfo=dt.UTC)  # 18:30 BST
+
+    assert "Deadline Fri 29 Aug, 18:30 UK" in format_recommendation(rec, deadline)[0]
+    assert "Deadline" not in format_recommendation(rec)[0]
+
+
+def test_team_table_rows_fit_a_phone_screen(settings: Settings, world: fakes.World) -> None:
+    rec = _recommend(settings, world, fakes.TEAM_ID)
+    rec["options"][0]["starting_xi"][0]["name"] = "Alexander-Arnold-Longname"
+    text = "\n".join(format_recommendation({**rec, "recommended_transfers": 0}))
+    tables = [t.split("</pre>")[0] for t in text.split("<pre>")[1:]]
+
+    assert "Alexander-Ar…" in text
+    assert all(len(row) <= 30 for table in tables for row in table.split("\n"))
 
 
 def test_the_verdict_says_hold_or_how_many_transfers(
@@ -67,12 +85,13 @@ def test_the_verdict_says_hold_or_how_many_transfers(
     moved = next(o for o in rec["options"] if o["transfers"] > 0)
     move = {**rec, "recommended_transfers": moved["transfers"]}
 
-    assert "Hold" in format_recommendation(hold)[0] and "Transfers\n" not in "".join(
-        format_recommendation(hold)
-    )
-    assert "OUT" in "".join(format_recommendation(move)) and "IN " in "".join(
-        format_recommendation(move)
-    )
+    hold_text = "".join(format_recommendation(hold))
+    move_text = "".join(format_recommendation(move))
+    first = moved["moves"][0]
+
+    assert "Hold this week" in hold_text and "Transfers" not in hold_text
+    assert f"Make {moved['transfers']} transfer" in move_text and "Transfers" in move_text
+    assert f"{first['out']['name']} ➜ <b>{first['in']['name']}</b>" in move_text
 
 
 def test_text_from_outside_is_escaped_for_telegram_html(
@@ -223,8 +242,12 @@ def test_it_only_sends_on_the_day_of_the_next_deadline() -> None:
     # The fake API's next deadline (gameweek 3) is 2025-08-29 17:30 UTC.
     source = fakes.FakeFplSource()
 
-    assert deadline_today(source, dt.datetime(2025, 8, 29, 9, 0, tzinfo=dt.UTC))
-    assert not deadline_today(source, dt.datetime(2025, 8, 28, 9, 0, tzinfo=dt.UTC))
+    on_the_day = next_deadline(source, dt.datetime(2025, 8, 29, 9, 0, tzinfo=dt.UTC))
+    day_before = next_deadline(source, dt.datetime(2025, 8, 28, 9, 0, tzinfo=dt.UTC))
+
+    assert on_the_day is not None and on_the_day.deadline_day
+    assert day_before is not None and not day_before.deadline_day
+    assert day_before.deadline == dt.datetime(2025, 8, 29, 17, 30, tzinfo=dt.UTC)
 
 
 def test_no_upcoming_deadline_means_nothing_is_sent() -> None:
@@ -233,7 +256,7 @@ def test_no_upcoming_deadline_means_nothing_is_sent() -> None:
             boot = super().bootstrap()
             return {**boot, "events": [{**e, "is_next": False} for e in boot["events"]]}
 
-    assert not deadline_today(SeasonOver(), dt.datetime(2025, 8, 29, 9, 0, tzinfo=dt.UTC))
+    assert not next_deadline(SeasonOver(), dt.datetime(2025, 8, 29, 9, 0, tzinfo=dt.UTC))
 
 
 def test_apostrophes_in_names_are_left_alone(settings: Settings, world: fakes.World) -> None:

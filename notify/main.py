@@ -25,7 +25,8 @@ from notify.telegram import Sender, TelegramSender
 log = logging.getLogger(__name__)
 
 
-def deadline_today(source: FplSource, now: dt.datetime) -> bool:
+def next_deadline(source: FplSource, now: dt.datetime) -> schedule.Schedule | None:
+    """The next gameweek's deadline and whether it is today (UK time); None if there is none."""
     plan = schedule.plan(source.bootstrap()["events"], now)
     log.info(
         "schedule",
@@ -35,11 +36,14 @@ def deadline_today(source: FplSource, now: dt.datetime) -> bool:
             "deadline_day": bool(plan and plan.deadline_day),
         },
     )
-    return plan is not None and plan.deadline_day
+    return plan
 
 
-def run(settings: Settings, repo: UserRepository, sender: Sender) -> int:
-    """Send to every active user. Returns how many were sent; raises if any failed."""
+def run(
+    settings: Settings, repo: UserRepository, sender: Sender, deadline: dt.datetime | None = None
+) -> int:
+    """Send to every active user. Returns how many were sent; raises if any failed.
+    The deadline, when known, is shown at the top of the message."""
     season, gameweek = latest_gameweek(settings, "predictions", "run predict and optimise first")
     sent = failed = 0
     for user in repo.list_active():
@@ -55,7 +59,7 @@ def run(settings: Settings, repo: UserRepository, sender: Sender) -> int:
             log.info("already notified", extra={"gameweek": gameweek})
             continue
         try:
-            for message in format_recommendation(rec):
+            for message in format_recommendation(rec, deadline):
                 sender.send(user.chat_id, message)
         except Exception:
             repo.release_notification(user.chat_id, season, gameweek)
@@ -74,13 +78,13 @@ def main() -> None:
     configure_logging(settings.log_level)
     if settings.telegram_bot_token is None:
         raise RuntimeError("set TELEGRAM_BOT_TOKEN")
-    if not settings.force_notify and not deadline_today(
-        FplClient(settings), dt.datetime.now(dt.UTC)
-    ):
+    plan = next_deadline(FplClient(settings), dt.datetime.now(dt.UTC))
+    if not (plan and plan.deadline_day) and not settings.force_notify:
         log.info("the next deadline is not today, so nothing was sent")
         return
     sender = TelegramSender(settings.telegram_bot_token.get_secret_value())
-    run(settings, get_user_repository(settings), sender)
+    deadline = plan.deadline if plan else None  # shown in the message, also on forced sends
+    run(settings, get_user_repository(settings), sender, deadline)
 
 
 if __name__ == "__main__":
