@@ -32,7 +32,7 @@ class Settings(BaseSettings):
 
     # Optimiser: whose team, how many transfers to consider, and how cautious to be.
     fpl_team_id: int | None = None
-    max_transfers: int = 4  # evaluate 0..this many transfers
+    max_transfers: int = 5  # evaluate 0..this many transfers (5: as many as can be banked)
     bench_weight: float = 0.1  # how much the bench counts towards the objective (tie-break)
     min_gain_per_transfer: float = 0.5  # expected points a transfer must earn to be recommended
     max_free_transfers: int = 5  # free transfers can be banked up to this many

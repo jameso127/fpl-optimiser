@@ -2,8 +2,7 @@
 
 One card per transfer: the player going out on the left, the one coming in on the right, the
 expected-points swing between them, and under each a bar chart of their points over the last
-few gameweeks (both charts on the same scale, so they compare at a glance). At the bottom, the
-expected gain for every number of transfers, the recommended one highlighted.
+few gameweeks (both charts on the same scale, so they compare at a glance).
 """
 
 from typing import Any
@@ -29,9 +28,9 @@ from notify.draw import (
 from notify.format import pick
 
 WIDTH = 1080
-HEADER, CARD, GAP, OPTIONS = 180, 410, 24, 330
+HEADER, CARD, GAP = 180, 410, 24
 MARGIN = 32
-OUT_BAR, IN_BAR, EMPTY_BAR, OTHER_OPTION = "#ff6b81", ACCENT, "#5a4a62", "#6d5a75"
+OUT_BAR, IN_BAR, EMPTY_BAR = "#ff6b81", ACCENT, "#5a4a62"
 
 
 def _side(
@@ -124,46 +123,15 @@ def _header(draw: ImageDraw.ImageDraw, best: dict[str, Any]) -> None:
     text(draw, (WIDTH - 56, 132), "vs keeping your team", 30, MUTED, anchor="rm", bold=False)
 
 
-def _options(draw: ImageDraw.ImageDraw, top: float, rec: dict[str, Any]) -> None:
-    """Expected gain against holding for 0..N transfers (hits included)."""
-    options = rec["options"]
-    draw.rounded_rectangle((MARGIN, top, WIDTH - MARGIN, top + OPTIONS - GAP), radius=28,
-                           fill=PURPLE)  # fmt: skip
-    text(draw, (WIDTH / 2, top + 36), "EXPECTED GAIN BY NUMBER OF TRANSFERS", 28, MUTED)
-    gains = [o["gain_vs_hold"] for o in options]
-    high, low = max([*gains, 0.5]), min([*gains, 0.0])
-    chart_top, chart_bottom = top + 100, top + OPTIONS - 90
-    zero = chart_top + (chart_bottom - chart_top) * high / (high - low)
-    per_point = (chart_bottom - chart_top) / (high - low)
-    slot = (WIDTH - 2 * MARGIN - 80) / len(options)
-    draw.line((MARGIN + 30, zero, WIDTH - MARGIN - 30, zero), fill=MUTED, width=2)
-    for i, option in enumerate(options):
-        mid = MARGIN + 40 + slot * (i + 0.5)
-        gain = option["gain_vs_hold"]
-        picked = option["transfers"] == rec["recommended_transfers"]
-        end = zero - gain * per_point
-        draw.rounded_rectangle((mid - 34, min(zero, end), mid + 34, max(zero, end) + 1), radius=6,
-                               fill=ACCENT if picked else OTHER_OPTION)  # fmt: skip
-        value_y = end - 18 if gain >= 0 else end + 18
-        text(draw, (mid, value_y), f"{gain:+.1f}", 26, WHITE)
-        n = option["transfers"]
-        label = "Hold" if n == 0 else str(n)
-        text(draw, (mid, chart_bottom + 34), label, 28, ACCENT if picked else WHITE)
-        if option["hit_cost"]:
-            text(draw, (mid, chart_bottom + 62), f"-{option['hit_cost']:.0f} hit", 20, MUTED,
-                 bold=False)  # fmt: skip
-
-
 def draw_transfers(rec: dict[str, Any]) -> bytes | None:
     """The recommended transfers as a PNG, or None when the advice is to hold."""
     best = pick(rec)
     if not best["moves"]:
         return None
-    height = HEADER + GAP + len(best["moves"]) * (CARD + GAP) + OPTIONS
+    height = HEADER + GAP + len(best["moves"]) * (CARD + GAP)
     image = Image.new("RGBA", (WIDTH, height), DEEP)
     draw = ImageDraw.Draw(image)
     _header(draw, best)
     for i, move in enumerate(best["moves"]):
         _card(draw, HEADER + GAP + i * (CARD + GAP), move)
-    _options(draw, HEADER + GAP + len(best["moves"]) * (CARD + GAP), rec)
     return png(image)

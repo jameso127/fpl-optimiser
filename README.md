@@ -19,8 +19,7 @@ On deadline day, two pictures and hardly any words:
 1. **Your team on a pitch**: club shirts, expected points, fixture difficulty, with the captain,
    new signings and injury doubts marked. It arrives with an animated effect.
 2. **The transfers**: each swap as OUT ➜ IN with the expected-points swing and a bar chart of
-   both players' last five gameweeks, plus a chart of the gain for 0 to 4 transfers. Buttons
-   underneath go straight to FPL's transfer page.
+   both players' last five gameweeks. Buttons underneath go straight to FPL's transfer page.
 
 If the pictures can't be drawn, the same advice is sent as text, which reads like this (from the
 test data, so the names are placeholders):
