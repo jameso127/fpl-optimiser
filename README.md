@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="docs/images/banner.svg" alt="FPL Optimiser: predict, optimise and get the gameweek plan on your phone" width="100%">
+</p>
+
 # FPL Optimiser
 
 [![CI](https://github.com/jameso127/fpl-optimiser/actions/workflows/ci.yml/badge.svg)](https://github.com/jameso127/fpl-optimiser/actions/workflows/ci.yml)
