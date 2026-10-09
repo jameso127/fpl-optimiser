@@ -13,8 +13,8 @@ class Settings(BaseSettings):
     gameweek: int | None = None
     season: str | None = None  # e.g. "2026-27"; default: derived from the data
 
-    # Ingest only: write schedule.json and stop. The workflow's daily check runs it this way.
-    schedule_only: bool = False
+    # Notify only: send even when the next deadline is not today (manual runs).
+    force_notify: bool = False
 
     # Model lifecycle: train once (job `train`), serve many times (job `predict`).
     model_name: str = "xpts-hurdle"

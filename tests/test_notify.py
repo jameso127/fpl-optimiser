@@ -1,3 +1,4 @@
+import datetime as dt
 import json
 from pathlib import Path
 from typing import Any
@@ -10,6 +11,7 @@ import notify.telegram as telegram
 from common.config import Settings
 from common.users import InMemoryUserRepository, User
 from notify.format import format_recommendation
+from notify.main import deadline_today
 from notify.main import run as notify_run
 from notify.telegram import MAX_LENGTH, TelegramError, TelegramSender
 from optimise.main import run as optimise_run
@@ -215,6 +217,23 @@ def test_a_user_with_no_recommendation_is_reported_not_skipped_silently(
     with pytest.raises(RuntimeError, match="1 notification"):
         notify_run(settings, repo, sender)
     assert {chat for chat, _ in sender.sent} == {2}
+
+
+def test_it_only_sends_on_the_day_of_the_next_deadline() -> None:
+    # The fake API's next deadline (gameweek 3) is 2025-08-29 17:30 UTC.
+    source = fakes.FakeFplSource()
+
+    assert deadline_today(source, dt.datetime(2025, 8, 29, 9, 0, tzinfo=dt.UTC))
+    assert not deadline_today(source, dt.datetime(2025, 8, 28, 9, 0, tzinfo=dt.UTC))
+
+
+def test_no_upcoming_deadline_means_nothing_is_sent() -> None:
+    class SeasonOver(fakes.FakeFplSource):
+        def bootstrap(self) -> dict[str, Any]:
+            boot = super().bootstrap()
+            return {**boot, "events": [{**e, "is_next": False} for e in boot["events"]]}
+
+    assert not deadline_today(SeasonOver(), dt.datetime(2025, 8, 29, 9, 0, tzinfo=dt.UTC))
 
 
 def test_apostrophes_in_names_are_left_alone(settings: Settings, world: fakes.World) -> None:

@@ -3,22 +3,19 @@
 For target gameweek n it writes a snapshot (players, teams, events, fixtures) to gw=n/, and
 live per-player stats for every finished gameweek, backfilling any that are missing and
 always refreshing the most recent finished one. Re-running overwrites; it never appends.
-
-It also writes `schedule.json` (is the next deadline today?). With SCHEDULE_ONLY=true it writes
-only that and stops: the workflow runs it that way each morning to decide whether to continue.
+It runs every day, so gw=n/ ends up holding the last snapshot taken before n's deadline.
 
 The players snapshot matters: it holds FPL's `ep_next` as of the deadline, which cannot be
 recovered later and is the baseline the predictions are backtested against.
 """
 
-import datetime as dt
 import logging
 
 from common.config import Settings, get_settings
 from common.fpl_client import FplClient, FplSource
 from common.logging import configure_logging
-from common.storage import exists, gw_path, write_json, write_parquet
-from ingest import schedule, transform
+from common.storage import exists, gw_path, write_parquet
+from ingest import transform
 
 log = logging.getLogger(__name__)
 
@@ -28,13 +25,6 @@ def run(settings: Settings, source: FplSource) -> int:
     season = settings.season or transform.season_label(bootstrap)
     gameweek = settings.gameweek or transform.target_gameweek(bootstrap)
     log.info("ingest start", extra={"season": season, "gameweek": gameweek})
-
-    plan = schedule.plan(bootstrap["events"], dt.datetime.now(dt.UTC))
-    if plan is not None:
-        write_json(settings, plan.to_json(), "schedule.json")
-        log.info("schedule", extra=plan.to_json())
-    if settings.schedule_only:
-        return gameweek
 
     snapshot = {
         "players": transform.players_frame(bootstrap),

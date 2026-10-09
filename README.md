@@ -18,19 +18,20 @@ Scheduler (weekly)          -> Cloud Run job:                train
 
 | Job | What it does |
 |---|---|
-| `ingest` | Saves a snapshot of the FPL API (players, teams, fixtures, live stats) as Parquet, and plans when to send. |
+| `ingest` | Saves a snapshot of the FPL API (players, teams, fixtures, live stats) as Parquet. |
 | `train` | Trains and evaluates a model, registers it, and only promotes it if it passes a gate. |
 | `predict` | Scores every player for the next gameweek with the promoted model. Never trains. |
 | `optimise` | For each user, finds the best team for 0 to N transfers, counting the points hit. |
-| `notify` | Sends each user their recommendation on Telegram, once per gameweek. |
+| `notify` | On deadline days, sends each user their recommendation on Telegram, once per gameweek. |
 
 ## When messages are sent
 
-Daily at 10:00 UK time the workflow runs `ingest` with `SCHEDULE_ONLY=true`, which only writes
-a small `schedule.json` saying whether the next deadline is today. On a deadline day the
-workflow runs the whole pipeline and sends the advice; on other days it stops there. A deadline
-before 10:00 is missed, which is accepted for now. The rule is plain Python in
-`ingest/schedule.py`, with tests, so the workflow only reads the answer.
+Daily at 10:00 UK time the workflow runs the whole pipeline. `notify` checks the FPL schedule
+and only sends the advice when the next deadline is today; on other days it logs that and
+exits (`FORCE_NOTIFY=true` sends anyway). A deadline before 10:00 is missed, which is accepted
+for now. The rule is plain Python in `common/schedule.py`, with tests. Running the other jobs
+every day costs a little more than running them only on deadline days; revisit if it shows up
+on the bill.
 
 ## Decisions worth a look
 

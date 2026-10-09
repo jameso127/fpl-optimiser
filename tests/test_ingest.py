@@ -9,7 +9,6 @@ from common.storage import (
     available_seasons,
     exists,
     gw_path,
-    read_json,
     read_parquet,
 )
 from ingest import transform
@@ -94,20 +93,3 @@ def test_gameweek_override(tmp_path: Path) -> None:
 def test_target_gameweek_falls_back_when_season_over() -> None:
     bootstrap = {"events": [{"id": 37, "finished": True}, {"id": 38, "finished": True}]}
     assert transform.target_gameweek(bootstrap) == 38
-
-
-def test_it_writes_the_next_gameweek_and_whether_its_deadline_is_today(tmp_path: Path) -> None:
-    settings = _settings(tmp_path)
-    run(settings, FakeFplSource())
-    plan = read_json(settings, "schedule.json")
-
-    assert plan["gameweek"] == 3
-    assert plan["deadline"].startswith("2025-08-29") and plan["deadline_day"] is False
-
-
-def test_schedule_only_writes_the_schedule_and_no_data(tmp_path: Path) -> None:
-    settings = _settings(tmp_path, schedule_only=True)
-    run(settings, FakeFplSource())
-
-    assert read_json(settings, "schedule.json")["gameweek"] == 3
-    assert available_seasons(settings) == []

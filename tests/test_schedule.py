@@ -1,6 +1,6 @@
 import datetime as dt
 
-from ingest.schedule import plan
+from common.schedule import plan
 
 
 def _events(deadline: str, gameweek: int = 6) -> list[dict[str, object]]:
@@ -25,7 +25,7 @@ def test_it_reports_the_next_gameweek_and_its_deadline() -> None:
 
     assert result is not None and result.gameweek == 6
     assert result.deadline == _at("2026-10-10T17:30:00+00:00")
-    assert result.to_json()["deadline_day"] is True
+    assert result.deadline_day
 
 
 def test_it_is_only_a_deadline_day_on_the_deadlines_uk_date() -> None:
