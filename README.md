@@ -25,32 +25,30 @@ text, it reads like this (from the test data, so the names are placeholders):
 
 ✅ Make 1 transfer for +2.3 pts expected (no hit).
 
+🎖 Captain P71 · 7.0 xPts ×2
+     Vice: P44
+
 🔁 Transfers
 1. P45 ➜ P71  +1.2 pts
      C05 £10.0m ➜ C08 £10.5m
 💰 Bank after: £0.0m
 
-🎖 Captain P71 · 7.0 xPts ×2
-     Vice: P44
-
-📋 Starting XI · 39.0 xPts
-GK  P64             C08  2.3
-DEF P47             C06  2.3
-...
-FWD P71          *C C08  7.0
-FWD P44           V C05  4.0
-C captain · V vice · * new signing
 🪑 Bench: P28, P58, P88, P03
 
-📊 Every option
-  Moves Hit   xPts   Gain
-  hold        36.8   +0.0
-> 1           39.0   +2.3
-  2      -4   39.1   +2.4
-  3      -8   36.5   -0.2
-> = recommended. Each transfer must add at least 0.5 pts to be worth it.
+🔎 Starting XI · 39.0 xPts            (folded until tapped)
+P64 C08 · 2.3 xPts
+...
+🆕 P71 (C) C08 · 7.0 xPts
+P44 (V) C05 · 4.0 xPts
 
-ℹ️ Based on
+📊 Every option                        (folded)
+▫️ Hold: 36.8 pts (+0.0)
+▶️ 1 transfer: 39.0 pts (+2.3)
+▫️ 2 transfers, -4 hit: 39.1 pts (+2.4)
+▫️ 3 transfers, -8 hit: 36.5 pts (-0.2)
+Each transfer must add at least 0.5 pts to be worth it.
+
+ℹ️ Based on                            (folded)
 • Your team as FPL shows it after the gameweek 2 deadline.
 • Free transfers left: 1 (estimated).
 ```
