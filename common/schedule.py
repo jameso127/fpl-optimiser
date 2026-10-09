@@ -1,8 +1,7 @@
 """Is the next gameweek's deadline today?
 
-The pipeline starts every morning at 10:00 UK. Ingest, run in `SCHEDULE_ONLY` mode, writes this
-answer to `schedule.json`, and the workflow reads it to decide whether to carry on. Keeping the
-rule here means it is plain Python that can be tested, not an expression in the workflow.
+The pipeline runs every morning at 10:00 UK. Every job runs each day, but notify only sends on
+a deadline day: it asks this module, so the rule is plain Python that can be tested.
 """
 
 import datetime as dt
@@ -18,13 +17,6 @@ class Schedule:
     gameweek: int
     deadline: dt.datetime
     deadline_day: bool  # is the deadline later today, UK time?
-
-    def to_json(self) -> dict[str, Any]:
-        return {
-            "gameweek": self.gameweek,
-            "deadline": self.deadline.isoformat(),
-            "deadline_day": self.deadline_day,
-        }
 
 
 def plan(events: list[dict[str, Any]], now: dt.datetime) -> Schedule | None:

@@ -4,12 +4,13 @@ from pathlib import Path
 from typing import Any
 
 import httpx
+import pandas as pd
 import pytest
 
 from common.config import Settings
 from common.fpl_client import FplClient
-from common.storage import read_json, recommendation_path
-from optimise.main import build_pool, run
+from common.storage import gw_path, read_json, recommendation_path, write_parquet
+from optimise.main import build_pool, player_stats, recent_points, run
 from tests import fakes
 
 
@@ -32,6 +33,54 @@ def test_writes_a_recommendation_for_every_number_of_transfers(tmp_path: Path) -
     assert stored["recommended_transfers"] in {0, 1, 2, 3}
     assert stored["team_id"] == fakes.TEAM_ID and stored["gameweek"] == fakes.GAMEWEEK
     assert stored["model_version"] == "test-model"
+
+
+def test_player_cards_carry_fixtures_form_and_injury_news() -> None:
+    players = pd.DataFrame(
+        {
+            "id": [1, 2, 3], "team": [10, 20, 30], "form": ["6.5", "0.0", None],
+            "selected_by_percent": ["23.4", "1.0", "0.5"],
+            "chance_of_playing_next_round": [None, 75.0, None],
+            "news": ["", "Knock - 75% chance of playing", None], "total_points": [40, 12, 3],
+        }
+    )  # fmt: skip
+    fixtures = pd.DataFrame(
+        {
+            "event": [3, 3, 4], "team_h": [10, 30, 20], "team_a": [20, 10, 30],
+            "team_h_difficulty": [2, 4, 3], "team_a_difficulty": [5, 3, 3],
+        }
+    )  # fmt: skip
+    teams = {10: "ARS", 20: "LIV", 30: "BOU"}
+
+    stats = player_stats(players, fixtures, teams, gameweek=3)
+
+    assert stats[1]["fixtures"] == [  # a double gameweek: both games, in order
+        {"opponent": "LIV", "home": True, "difficulty": 2},
+        {"opponent": "BOU", "home": False, "difficulty": 3},
+    ]
+    assert stats[1]["form"] == 6.5 and stats[1]["ownership"] == 23.4 and "news" not in stats[1]
+    assert stats[2]["chance_of_playing"] == 75.0 and stats[2]["news"].startswith("Knock")
+    assert "form" not in stats[3] and "chance_of_playing" not in stats[3]  # unknown: left out
+    assert "fixtures" not in player_stats(players, None, teams, gameweek=3)[1]
+    blank = player_stats(players, fixtures[fixtures["event"] == 4], teams, gameweek=3)
+    assert blank[1]["fixtures"] == []  # no game this gameweek
+
+
+def test_recent_points_cover_the_last_five_finished_gameweeks(tmp_path: Path) -> None:
+    settings = _settings(tmp_path)
+    for gw in range(1, 8):
+        if gw == 5:
+            continue  # never stored: skipped, not an error
+        live = pd.DataFrame({"id": [1, 2], "total_points": [gw, 0], "minutes": [90, 0]})
+        write_parquet(settings, live, gw_path(fakes.SEASON, gw, "live"))
+
+    recent = recent_points(settings, fakes.SEASON, finished=[1, 2, 3, 4, 5, 6, 7])
+
+    assert [g["gameweek"] for g in recent[1]] == [3, 4, 6, 7]  # last five: 3..7, minus 5
+    assert recent[1][-1] == {"gameweek": 7, "points": 7, "minutes": 90}
+    assert recent[2][0]["minutes"] == 0
+    stats = player_stats(pd.DataFrame({"id": [1, 3], "team": [10, 10]}), None, {}, 8, recent)
+    assert stats[1]["recent"] == recent[1] and stats[3]["recent"] == []
 
 
 def test_every_option_is_a_legal_team(tmp_path: Path) -> None:

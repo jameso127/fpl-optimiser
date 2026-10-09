@@ -13,8 +13,8 @@ class Settings(BaseSettings):
     gameweek: int | None = None
     season: str | None = None  # e.g. "2026-27"; default: derived from the data
 
-    # Ingest only: write schedule.json and stop. The workflow's daily check runs it this way.
-    schedule_only: bool = False
+    # Notify only: send even when the next deadline is not today (manual runs).
+    force_notify: bool = False
 
     # Model lifecycle: train once (job `train`), serve many times (job `predict`).
     model_name: str = "xpts-hurdle"
@@ -32,13 +32,14 @@ class Settings(BaseSettings):
 
     # Optimiser: whose team, how many transfers to consider, and how cautious to be.
     fpl_team_id: int | None = None
-    max_transfers: int = 4  # evaluate 0..this many transfers
+    max_transfers: int = 5  # evaluate 0..this many transfers (5: as many as can be banked)
     bench_weight: float = 0.1  # how much the bench counts towards the objective (tie-break)
     min_gain_per_transfer: float = 0.5  # expected points a transfer must earn to be recommended
     max_free_transfers: int = 5  # free transfers can be banked up to this many
     free_transfers_override: int | None = None  # use when the estimate is wrong
 
     fpl_base_url: str = "https://fantasy.premierleague.com/api"
+    fpl_site_url: str = "https://fantasy.premierleague.com"  # the buttons under each message
     fpl_user_agent: str = "fpl-optimiser-demo/0.1"
     fpl_min_interval_seconds: float = 0.5
 

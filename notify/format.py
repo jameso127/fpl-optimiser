@@ -1,9 +1,22 @@
-"""Turn a recommendation (the optimise job's JSON) into Telegram messages (HTML)."""
+"""Turn a recommendation (the optimise job's JSON) into Telegram text (HTML).
 
+Normally the pictures (pitch.py, transfers.py) carry the advice and the text is two captions:
+`summary` (deadline, verdict, captain) and `notes` (what the advice assumes).
+`format_recommendation` is the whole thing as text, sent only if the pictures cannot be drawn.
+"""
+
+import datetime as dt
 from html import escape as _escape
 from typing import Any
+from zoneinfo import ZoneInfo
 
 from notify.telegram import MAX_LENGTH
+
+LONDON = ZoneInfo("Europe/London")
+CAPTION_LENGTH = 1024  # Telegram's limit for a photo caption
+
+# FPL's fixture difficulty rating, 1 (easiest) to 5, as a coloured dot.
+DIFFICULTY = {1: "🟢", 2: "🟢", 3: "⚪", 4: "🟠", 5: "🔴"}
 
 
 def escape(text: str) -> str:
@@ -11,72 +24,211 @@ def escape(text: str) -> str:
     return _escape(text, quote=False)
 
 
-def _pick(rec: dict[str, Any]) -> dict[str, Any]:
+def pick(rec: dict[str, Any]) -> dict[str, Any]:
+    """The recommended option."""
     return next(o for o in rec["options"] if o["transfers"] == rec["recommended_transfers"])
 
 
-def _row(player: dict[str, Any]) -> str:
-    captain = " (C)" if player["captain"] else " (V)" if player["vice_captain"] else ""
-    name = f"{player['name']}{captain}"
-    return f"{player['position']:<4}{name:<18}{player['team']:<4}{player['xpts']:>5.1f}"
+def _plural(n: int, word: str) -> str:
+    return f"{n} {word}{'' if n == 1 else 's'}"
 
 
-def _move(move: dict[str, Any]) -> str:
-    out, into = move["out"], move["in"]
-    return (
-        f"OUT {escape(out['name'])} ({out['team']}, £{out['sell_price']:.1f}m)\n"
-        f"IN  {escape(into['name'])} ({into['team']}, £{into['price']:.1f}m)"
+def _section(title: str, lines: list[str]) -> str:
+    return f"<b>{title}</b>\n" + "\n".join(lines)
+
+
+# --- player facts -----------------------------------------------------------------------------
+
+
+def fixtures_text(player: dict[str, Any]) -> str:
+    """e.g. '🟠 ARS (A)'; 'no game' in a blank gameweek; '' when fixtures are unknown."""
+    games = player.get("fixtures")
+    if games is None:
+        return ""
+    if not games:
+        return "no game"
+    return ", ".join(
+        f"{DIFFICULTY.get(g['difficulty'], '')} {escape(g['opponent'])} "
+        f"({'H' if g['home'] else 'A'})"
+        for g in games
     )
 
 
-def _summary(option: dict[str, Any]) -> str:
-    n = option["transfers"]
-    label = "hold" if n == 0 else f"{n} transfer{'s' if n > 1 else ''}"
-    hit = f", -{option['hit_cost']:.0f} hit" if option["hit_cost"] else ""
-    return f"{label}: {option['net_xpts']:.1f} pts{hit} ({option['gain_vs_hold']:+.1f})"
+def _facts(player: dict[str, Any]) -> str:
+    parts = [fixtures_text(player)]
+    if "form" in player:
+        parts.append(f"form {player['form']:.1f}")
+    if "ownership" in player:
+        parts.append(f"{player['ownership']:.0f}% owned")
+    return " · ".join(p for p in parts if p)
 
 
-def format_recommendation(rec: dict[str, Any]) -> list[str]:
-    """One or more messages, each within Telegram's length limit."""
-    best = _pick(rec)
+def _doubt(player: dict[str, Any]) -> str | None:
+    """'75%: Knock' for a player who might not play, else None."""
+    chance = player.get("chance_of_playing")
+    if chance is None or chance >= 100:
+        return None
+    news = player.get("news")
+    return f"{chance:.0f}%" + (f": {escape(news)}" if news else "")
+
+
+# --- the summary (the photo caption) ----------------------------------------------------------
+
+
+def _header(rec: dict[str, Any], deadline: dt.datetime | None) -> str:
+    title = f"⚽ <b>Gameweek {rec['gameweek']}</b>"
+    if deadline is None:
+        return title
+    uk = deadline.astimezone(LONDON)
+    return f"{title}\n⏰ Deadline {uk:%a} {uk.day} {uk:%b}, {uk:%H:%M} UK"
+
+
+def _verdict(rec: dict[str, Any], best: dict[str, Any]) -> str:
     n = best["transfers"]
-    verdict = (
-        "Hold: no transfer is worth it."
-        if n == 0
-        else f"Make {n} transfer{'s' if n > 1 else ''}: {best['gain_vs_hold']:+.1f} points "
-        f"({'no hit' if not best['hit_cost'] else f'-{best["hit_cost"]:.0f} hit included'})."
-    )
-    blocks = [f"<b>Gameweek {rec['gameweek']}</b>\n{verdict}"]
-    if best["moves"]:
-        blocks.append(
-            "<b>Transfers</b>\n<pre>" + "\n\n".join(_move(m) for m in best["moves"]) + "</pre>"
+    if n == 0:
+        return (
+            "✋ <b>Hold this week.</b>\n"
+            f"No transfer adds at least {rec['min_gain_per_transfer']:.1f} pts, "
+            "so save it for later."
         )
+    hit = f"after a -{best['hit_cost']:.0f} hit" if best["hit_cost"] else "no hit"
+    return (
+        f"✅ <b>Make {_plural(n, 'transfer')}</b> for "
+        f"<b>{best['gain_vs_hold']:+.1f} pts</b> expected ({hit})."
+    )
 
-    xi = "\n".join(_row(p) for p in best["starting_xi"])
+
+def _captaincy(best: dict[str, Any]) -> str:
+    captain = next((p for p in best["starting_xi"] if p["captain"]), None)
+    xpts = f" · {captain['xpts']:.1f} xPts ×2" if captain else ""
+    return (
+        f"🎖 Captain <b>{escape(best['captain'])}</b>{xpts}\n"
+        f"     Vice: {escape(best['vice_captain'])}"
+    )
+
+
+def summary(rec: dict[str, Any], deadline: dt.datetime | None = None) -> str:
+    """Deadline, verdict and captain: short enough for a photo caption (CAPTION_LENGTH)."""
+    best = pick(rec)
+    return f"{_header(rec, deadline)}\n\n{_verdict(rec, best)}\n\n{_captaincy(best)}"
+
+
+# --- the details ------------------------------------------------------------------------------
+
+
+def _move(i: int, move: dict[str, Any]) -> str:
+    out, into = move["out"], move["in"]
+    swing = into["xpts"] - out["xpts"]
+    lines = [
+        f"{i}. {escape(out['name'])} ➜ <b>{escape(into['name'])}</b>  <i>{swing:+.1f} pts</i>",
+        f"     {escape(out['team'])} £{out['sell_price']:.1f}m ➜ "
+        f"{escape(into['team'])} £{into['price']:.1f}m",
+    ]
+    if facts := _facts(into):
+        lines.append(f"     {facts}")
+    if doubt := _doubt(out):
+        lines.append(f"     🚑 {escape(out['name'])} {doubt}")
+    return "\n".join(lines)
+
+
+def _transfers(best: dict[str, Any]) -> str:
+    moves = "\n".join(_move(i, m) for i, m in enumerate(best["moves"], start=1))
+    return f"🔁 <b>Transfers</b>\n{moves}\n💰 Bank after: £{best['bank_after']:.1f}m"
+
+
+def _squad_notes(best: dict[str, Any]) -> str:
     bench = ", ".join(escape(p["name"]) for p in best["bench"])
-    blocks.append(f"<b>Starting XI</b> (xPts)\n<pre>{escape(xi)}</pre>Bench: {bench}")
+    lines = [f"🪑 Bench: {bench}"]
+    doubts = [
+        f"{escape(p['name'])} {d}"
+        for p in [*best["starting_xi"], *best["bench"]]
+        if (d := _doubt(p))
+    ]
+    if doubts:
+        lines.append("⚠️ <b>Fitness doubts</b>\n" + "\n".join(f"• {d}" for d in doubts))
+    return "\n".join(lines)
 
-    blocks.append(
-        "<b>All options</b>\n<pre>" + "\n".join(_summary(o) for o in rec["options"]) + "</pre>"
+
+def _player_line(player: dict[str, Any], new: set[int]) -> str:
+    role = " (C)" if player["captain"] else " (V)" if player["vice_captain"] else ""
+    badge = "🆕 " if player["id"] in new else ""
+    facts = _facts(player)
+    return (
+        f"{badge}<b>{escape(player['name'])}</b>{role} {escape(player['team'])} · "
+        f"{player['xpts']:.1f} xPts" + (f" · {facts}" if facts else "")
     )
-    blocks.append(
-        "<b>Based on</b>\n" + "\n".join(f"• {escape(line)}" for line in rec["assumptions"])
+
+
+def _players(best: dict[str, Any]) -> str:
+    new = {m["in"]["id"] for m in best["moves"]}
+    lines = [_player_line(p, new) for p in best["starting_xi"]]
+    return _section(f"🔎 Starting XI · {best['xpts']:.1f} xPts", lines)
+
+
+def _option_line(option: dict[str, Any], picked: int) -> str:
+    n = option["transfers"]
+    label = "Hold" if n == 0 else _plural(n, "transfer")
+    hit = f", -{option['hit_cost']:.0f} hit" if option["hit_cost"] else ""
+    text = f"{label}{hit}: {option['net_xpts']:.1f} pts ({option['gain_vs_hold']:+.1f})"
+    return f"▶️ <b>{text}</b>" if n == picked else f"▫️ {text}"
+
+
+def _options(rec: dict[str, Any]) -> str:
+    lines = [_option_line(o, rec["recommended_transfers"]) for o in rec["options"]]
+    lines.append(
+        f"<i>Each transfer must add at least {rec['min_gain_per_transfer']:.1f} pts "
+        "to be worth it.</i>"
     )
+    return _section("📊 Every option", lines)
+
+
+def _assumptions(rec: dict[str, Any]) -> str:
+    return _section("ℹ️ Based on", [f"• {escape(line)}" for line in rec["assumptions"]])
+
+
+def notes(rec: dict[str, Any]) -> str:
+    """What the advice assumes, in small print: the caption under the last picture."""
+    return "ℹ️ <i>" + escape(" ".join(rec["assumptions"])) + "</i>"
+
+
+def details(rec: dict[str, Any]) -> list[str]:
+    """Everything after the summary, as messages within Telegram's length limit."""
+    best = pick(rec)
+    blocks = [_transfers(best)] if best["moves"] else []
+    blocks += [
+        _squad_notes(best),
+        _players(best),
+        _options(rec),
+        _assumptions(rec),
+        "<i>Predictions are estimates, not guarantees. Good luck! 🍀</i>",
+    ]
     return _split(blocks)
 
 
-def _lines(block: str) -> list[str]:
-    """A block that is too long for one message, cut at line breaks. Only plain-text blocks can
-    get this long (the tables are a handful of lines), so no HTML tag is ever left open."""
+def format_recommendation(rec: dict[str, Any], deadline: dt.datetime | None = None) -> list[str]:
+    """The whole recommendation as text: used when there is no picture to put the summary under."""
+    return _split([summary(rec, deadline), *details(rec)])
+
+
+# --- fitting Telegram's length limit ----------------------------------------------------------
+
+
+def _lines(block: str, limit: int) -> list[str]:
+    """A block that is too long for one message, cut at line breaks. Tags never span lines, so
+    none is left open."""
     chunks: list[str] = []
     current = ""
     for line in block.split("\n"):
-        line = line[:MAX_LENGTH]
-        if current and len(current) + len(line) + 1 > MAX_LENGTH:
+        line = line[:limit]
+        if current and len(current) + len(line) + 1 > limit:
             chunks.append(current)
             current = ""
         current = f"{current}\n{line}" if current else line
     return [*chunks, current]
+
+
+def _parts(block: str) -> list[str]:
+    return [block] if len(block) <= MAX_LENGTH else _lines(block, MAX_LENGTH)
 
 
 def _split(blocks: list[str]) -> list[str]:
@@ -84,7 +236,7 @@ def _split(blocks: list[str]) -> list[str]:
     messages: list[str] = []
     current = ""
     for block in blocks:
-        for part in _lines(block) if len(block) > MAX_LENGTH else [block]:
+        for part in _parts(block):
             if current and len(current) + len(part) + 2 > MAX_LENGTH:
                 messages.append(current)
                 current = ""

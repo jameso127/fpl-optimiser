@@ -31,15 +31,16 @@ If I ask for a job/service that doesn't exist yet, say so rather than assuming i
 
 ```
 Scheduler (daily 10:00 UK) -> Workflows -> Cloud Run Jobs: ingest -> predict -> optimise -> notify
-   first, ingest with SCHEDULE_ONLY=true writes schedule.json (is the deadline today?).
-   Not a deadline day: stop. Deadline day: run the four jobs.
+   all four jobs run every day; notify only sends when the next deadline is today
+   (common/schedule.py). FORCE_NOTIFY=true sends anyway.
 Scheduler (weekly) -> Cloud Run Job: train
                                    |
                            Cloud Storage (Parquet)
 ```
 
-- Shared, expensive work runs once per gameweek (ingest + predict for all players).
-- Per-user work (optimise, notify) is cheap and runs once per deadline day.
+- Shared work (ingest + predict for all players) runs daily for now; outputs for a gameweek are
+  overwritten until its deadline. Narrow this if the cost shows up.
+- Per-user work (optimise, notify) is cheap; optimise runs daily, notify sends on deadline days.
 - Storage is Parquet in GCS (no BigQuery unless asked). Users (chat id, FPL team id, settings,
   declared transfers, invites) are in Firestore behind a repository port, with an in-memory
   implementation for tests and single-user mode. Notifications go out over the Telegram Bot API.
