@@ -55,7 +55,10 @@ class DeclaredTransfer(BaseModel):
     out_price: int  # selling price of the player sold, in tenths of a million
     in_price: int  # market price of the player bought
     declared_at: dt.datetime = Field(default_factory=utcnow)
-    expires_at: dt.datetime = Field(default_factory=lambda: utcnow() + DECLARED_TRANSFER_RETENTION)
+    # From declared_at, not a second clock reading, so the two are exactly the retention apart.
+    expires_at: dt.datetime = Field(
+        default_factory=lambda data: data["declared_at"] + DECLARED_TRANSFER_RETENTION
+    )
 
 
 class Invite(BaseModel):
@@ -66,7 +69,9 @@ class Invite(BaseModel):
     uses_left: int = 1
     created_by: int | None = None
     created_at: dt.datetime = Field(default_factory=utcnow)
-    expires_at: dt.datetime = Field(default_factory=lambda: utcnow() + dt.timedelta(days=7))
+    expires_at: dt.datetime = Field(
+        default_factory=lambda data: data["created_at"] + dt.timedelta(days=7)
+    )
 
     @field_validator("code")
     @classmethod
