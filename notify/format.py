@@ -1,8 +1,8 @@
-"""Turn a recommendation (the optimise job's JSON) into Telegram messages (HTML).
+"""Turn a recommendation (the optimise job's JSON) into Telegram text (HTML).
 
-Written to be read on a phone. The summary (deadline, verdict, captain) is short enough to be the
-caption under the pitch picture; the details follow, with the long parts (every player, every
-option, the assumptions) folded into expandable quotes so the message stays short until tapped.
+Normally the pictures (pitch.py, transfers.py) carry the advice and the text is two captions:
+`summary` (deadline, verdict, captain) and `notes` (what the advice assumes).
+`format_recommendation` is the whole thing as text, sent only if the pictures cannot be drawn.
 """
 
 import datetime as dt
@@ -14,7 +14,6 @@ from notify.telegram import MAX_LENGTH
 
 LONDON = ZoneInfo("Europe/London")
 CAPTION_LENGTH = 1024  # Telegram's limit for a photo caption
-EXPAND_OPEN, EXPAND_CLOSE = "<blockquote expandable>", "</blockquote>"
 
 # FPL's fixture difficulty rating, 1 (easiest) to 5, as a coloured dot.
 DIFFICULTY = {1: "🟢", 2: "🟢", 3: "⚪", 4: "🟠", 5: "🔴"}
@@ -34,8 +33,8 @@ def _plural(n: int, word: str) -> str:
     return f"{n} {word}{'' if n == 1 else 's'}"
 
 
-def _expandable(title: str, lines: list[str]) -> str:
-    return f"{EXPAND_OPEN}<b>{title}</b>\n" + "\n".join(lines) + EXPAND_CLOSE
+def _section(title: str, lines: list[str]) -> str:
+    return f"<b>{title}</b>\n" + "\n".join(lines)
 
 
 # --- player facts -----------------------------------------------------------------------------
@@ -163,7 +162,7 @@ def _player_line(player: dict[str, Any], new: set[int]) -> str:
 def _players(best: dict[str, Any]) -> str:
     new = {m["in"]["id"] for m in best["moves"]}
     lines = [_player_line(p, new) for p in best["starting_xi"]]
-    return _expandable(f"🔎 Starting XI · {best['xpts']:.1f} xPts", lines)
+    return _section(f"🔎 Starting XI · {best['xpts']:.1f} xPts", lines)
 
 
 def _option_line(option: dict[str, Any], picked: int) -> str:
@@ -180,11 +179,16 @@ def _options(rec: dict[str, Any]) -> str:
         f"<i>Each transfer must add at least {rec['min_gain_per_transfer']:.1f} pts "
         "to be worth it.</i>"
     )
-    return _expandable("📊 Every option", lines)
+    return _section("📊 Every option", lines)
 
 
 def _assumptions(rec: dict[str, Any]) -> str:
-    return _expandable("ℹ️ Based on", [f"• {escape(line)}" for line in rec["assumptions"]])
+    return _section("ℹ️ Based on", [f"• {escape(line)}" for line in rec["assumptions"]])
+
+
+def notes(rec: dict[str, Any]) -> str:
+    """What the advice assumes, in small print: the caption under the last picture."""
+    return "ℹ️ <i>" + escape(" ".join(rec["assumptions"])) + "</i>"
 
 
 def details(rec: dict[str, Any]) -> list[str]:
@@ -210,8 +214,8 @@ def format_recommendation(rec: dict[str, Any], deadline: dt.datetime | None = No
 
 
 def _lines(block: str, limit: int) -> list[str]:
-    """A block that is too long for one message, cut at line breaks. Tags never span lines
-    (except the expandable quote, which `_parts` re-opens per chunk), so none is left open."""
+    """A block that is too long for one message, cut at line breaks. Tags never span lines, so
+    none is left open."""
     chunks: list[str] = []
     current = ""
     for line in block.split("\n"):
@@ -224,13 +228,7 @@ def _lines(block: str, limit: int) -> list[str]:
 
 
 def _parts(block: str) -> list[str]:
-    if len(block) <= MAX_LENGTH:
-        return [block]
-    if block.startswith(EXPAND_OPEN) and block.endswith(EXPAND_CLOSE):
-        inner = block[len(EXPAND_OPEN) : -len(EXPAND_CLOSE)]
-        limit = MAX_LENGTH - len(EXPAND_OPEN) - len(EXPAND_CLOSE)
-        return [f"{EXPAND_OPEN}{chunk}{EXPAND_CLOSE}" for chunk in _lines(inner, limit)]
-    return _lines(block, MAX_LENGTH)
+    return [block] if len(block) <= MAX_LENGTH else _lines(block, MAX_LENGTH)
 
 
 def _split(blocks: list[str]) -> list[str]:

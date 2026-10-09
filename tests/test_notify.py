@@ -19,6 +19,7 @@ from notify.format import (
     details,
     fixtures_text,
     format_recommendation,
+    notes,
     pick,
     summary,
 )
@@ -26,6 +27,7 @@ from notify.main import next_deadline, send_recommendation
 from notify.main import run as notify_run
 from notify.pitch import draw_pitch
 from notify.telegram import EFFECTS, MAX_LENGTH, Button, TelegramError, TelegramSender
+from notify.transfers import draw_transfers
 from optimise.main import run as optimise_run
 from tests import fakes
 
@@ -57,13 +59,19 @@ class RecordingSender:
         self.effects.append(effect_id)
 
     def send_photo(
-        self, chat_id: int, png: bytes, caption: str, *, effect_id: str | None = None
+        self,
+        chat_id: int,
+        png: bytes,
+        caption: str,
+        *,
+        buttons: Sequence[Sequence[Button]] = (),
+        effect_id: str | None = None,
     ) -> None:
         if chat_id in self.fail_for:
             raise TelegramError("boom")
         self.photos.append(png)
         self.sent.append((chat_id, caption))
-        self.buttons.append(())
+        self.buttons.append(buttons)
         self.effects.append(effect_id)
 
 
@@ -103,13 +111,11 @@ def test_the_summary_fits_a_photo_caption(settings: Settings, world: fakes.World
     assert "Gameweek" in caption and "Captain" in caption
 
 
-def test_long_sections_are_folded_away(settings: Settings, world: fakes.World) -> None:
+def test_the_notes_say_what_the_advice_assumes(settings: Settings, world: fakes.World) -> None:
     rec = _recommend(settings, world, fakes.TEAM_ID)
-    text = "\n".join(details(rec))
+    rec["assumptions"] = ["Free transfers left: 1 (estimated).", "Bought <cheap>."]
 
-    for title in ("🔎 Starting XI", "📊 Every option", "ℹ️ Based on"):
-        assert f"<blockquote expandable><b>{title}" in text
-    assert text.count("<blockquote expandable>") == text.count("</blockquote>") == 3
+    assert notes(rec) == "ℹ️ <i>Free transfers left: 1 (estimated). Bought &lt;cheap&gt;.</i>"
 
 
 def test_the_deadline_is_shown_in_uk_time(settings: Settings, world: fakes.World) -> None:
@@ -173,6 +179,20 @@ def test_the_team_is_drawn_as_a_png(settings: Settings, world: fakes.World) -> N
     assert draw_pitch({**rec, "recommended_transfers": 0})[:4] == b"\x89PNG"  # hold, no deadline
 
 
+def test_the_transfers_are_drawn_with_form_charts(settings: Settings, world: fakes.World) -> None:
+    rec, move = _with_stats(_recommend(settings, world, fakes.TEAM_ID))
+    move["out"]["recent"] = [{"gameweek": gw, "points": p, "minutes": 90}
+                             for gw, p in ((1, 2), (2, -1), (3, 12))]  # fmt: skip
+    move["in"]["recent"] = [{"gameweek": 3, "points": 0, "minutes": 0}]  # did not play
+
+    png = draw_transfers(rec)  # other moves have no history or fixtures: they still draw
+    assert png is not None
+    image = Image.open(io.BytesIO(png))
+
+    assert image.format == "PNG" and image.size[0] == 1080
+    assert draw_transfers({**rec, "recommended_transfers": 0}) is None  # nothing to show on hold
+
+
 def test_the_verdict_says_hold_or_how_many_transfers(
     settings: Settings, world: fakes.World
 ) -> None:
@@ -212,8 +232,7 @@ def test_long_recommendations_are_split_without_breaking_a_block(
 
     assert len(messages) > 1
     assert all(len(m) <= MAX_LENGTH for m in messages)
-    for m in messages:  # a folded section split across messages is re-opened in each one
-        assert m.count("<blockquote expandable>") == m.count("</blockquote>")
+    for m in messages:
         assert m.count("<b>") == m.count("</b>")
 
 
@@ -284,18 +303,21 @@ def test_buttons_and_effect_are_sent_with_the_message() -> None:
     assert seen[0]["message_effect_id"] == "42"
 
 
-def test_a_photo_is_uploaded_with_its_caption() -> None:
+def test_a_photo_is_uploaded_with_its_caption_and_buttons() -> None:
     seen: list[httpx.Request] = []
 
     def handler(request: httpx.Request) -> httpx.Response:
         seen.append(request)
         return httpx.Response(200, json={"ok": True})
 
-    _sender(handler).send_photo(7, b"\x89PNG-bytes", "<b>GW 3</b>")
+    _sender(handler).send_photo(
+        7, b"\x89PNG-bytes", "<b>GW 3</b>", buttons=[[("FPL", "https://example.org/t")]]
+    )
     body = seen[0].read()
 
     assert seen[0].url.path == f"/bot{TOKEN}/sendPhoto"
     assert b"\x89PNG-bytes" in body and b"<b>GW 3</b>" in body and b'name="chat_id"' in body
+    assert b'"inline_keyboard": [[{"text": "FPL", "url": "https://example.org/t"}]]' in body
 
 
 def test_an_unknown_effect_is_dropped_not_the_message() -> None:
@@ -316,19 +338,32 @@ def test_an_unknown_effect_is_dropped_not_the_message() -> None:
 # --- the job ----------------------------------------------------------------------------------
 
 
-def test_the_picture_comes_first_then_the_details_with_buttons(
+def test_transfers_are_sent_as_two_pictures_and_no_text(
     settings: Settings, world: fakes.World
 ) -> None:
     rec = _recommend(settings, world, fakes.TEAM_ID)
+    rec, _ = _with_stats(rec)  # make sure there are transfers to show
     sender = RecordingSender()
 
     send_recommendation(settings, sender, 1, rec, None)
 
-    assert len(sender.photos) == 1 and sender.sent[0][1] == summary(rec)
-    assert sender.effects[0] in (EFFECTS["fire"], EFFECTS["thumbs_up"])
-    assert sender.effects[1:] == [None] * (len(sender.sent) - 1)
-    assert sender.buttons[-1][0][0][1] == "https://fantasy.premierleague.com/transfers"
-    assert all(not b for b in sender.buttons[:-1])
+    assert len(sender.photos) == len(sender.sent) == 2  # pitch, then transfers; no text
+    assert [caption for _, caption in sender.sent] == [summary(rec), notes(rec)]
+    assert sender.effects == [EFFECTS["fire"], None]
+    assert sender.buttons[0] == () and sender.buttons[1][0][0][1].endswith("/transfers")
+
+
+def test_holding_is_one_picture_with_everything(settings: Settings, world: fakes.World) -> None:
+    rec = {**_recommend(settings, world, fakes.TEAM_ID), "recommended_transfers": 0}
+    sender = RecordingSender()
+
+    send_recommendation(settings, sender, 1, rec, None)
+
+    assert len(sender.photos) == len(sender.sent) == 1
+    caption = sender.sent[0][1]
+    assert "Hold this week" in caption and notes(rec) in caption
+    assert len(caption) <= CAPTION_LENGTH
+    assert sender.effects == [EFFECTS["thumbs_up"]] and sender.buttons[0]
 
 
 def test_without_a_picture_everything_is_sent_as_text(

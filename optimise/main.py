@@ -64,12 +64,39 @@ def _number(value: Any) -> float | None:
     return None if math.isnan(number) else number
 
 
+RECENT_GAMEWEEKS = 5  # how much history each player card carries (the form charts)
+
+
+def recent_points(
+    settings: Settings, season: str, finished: Sequence[int]
+) -> dict[int, list[dict[str, Any]]]:
+    """Each player's points and minutes in the last few finished gameweeks, oldest first.
+    A gameweek with no stored live stats is skipped."""
+    recent: dict[int, list[dict[str, Any]]] = {}
+    for gw in sorted(finished)[-RECENT_GAMEWEEKS:]:
+        rel = gw_path(season, gw, "live")
+        if not exists(settings, rel):
+            continue
+        live = read_parquet(settings, rel)
+        for pid, points, minutes in zip(
+            live["id"], live["total_points"], live["minutes"], strict=True
+        ):
+            recent.setdefault(int(pid), []).append(
+                {"gameweek": gw, "points": int(points), "minutes": int(minutes)}
+            )
+    return recent
+
+
 def player_stats(
-    players: pd.DataFrame, fixtures: pd.DataFrame | None, teams: Mapping[int, str], gameweek: int
+    players: pd.DataFrame,
+    fixtures: pd.DataFrame | None,
+    teams: Mapping[int, str],
+    gameweek: int,
+    recent: Mapping[int, list[dict[str, Any]]] | None = None,
 ) -> dict[int, dict[str, Any]]:
-    """Context for each player card: this gameweek's fixtures and FPL's own numbers (form,
-    ownership, injury news). Every field is optional: a missing column, or no fixtures file,
-    just leaves it out, and a blank gameweek is an empty fixture list."""
+    """Context for each player card: this gameweek's fixtures, recent points and FPL's own
+    numbers (form, ownership, injury news). Every field is optional: a missing column, or no
+    fixtures or live file, just leaves it out, and a blank gameweek is an empty fixture list."""
     games: dict[int, list[dict[str, Any]]] = {}
     if fixtures is not None:
         for f in fixtures[fixtures["event"] == gameweek].to_dict("records"):
@@ -90,6 +117,8 @@ def player_stats(
         extra: dict[str, Any] = {}
         if fixtures is not None:
             extra["fixtures"] = games.get(int(row["team"]), [])
+        if recent is not None:
+            extra["recent"] = recent.get(int(row["id"]), [])
         for key, column in (
             ("form", "form"),
             ("ownership", "selected_by_percent"),
@@ -286,7 +315,13 @@ def run(
         teams=teams,
         names=names,
         settings=settings,
-        stats=player_stats(players, fixtures, teams, gameweek),
+        stats=player_stats(
+            players,
+            fixtures,
+            teams,
+            gameweek,
+            recent_points(settings, season, [int(gw) for gw in finished]),
+        ),
     )
     uri = write_json(settings, rec, recommendation_path(season, gameweek, team_id))
     log.info(

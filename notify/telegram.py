@@ -1,6 +1,7 @@
 """A minimal Telegram Bot API client: send a text message to a chat, optionally with link
 buttons under it and an animated effect (private chats only)."""
 
+import json
 import logging
 import time
 from collections.abc import Sequence
@@ -39,7 +40,13 @@ class Sender(Protocol):
     ) -> None: ...
 
     def send_photo(
-        self, chat_id: int, png: bytes, caption: str, *, effect_id: str | None = None
+        self,
+        chat_id: int,
+        png: bytes,
+        caption: str,
+        *,
+        buttons: Sequence[Sequence[Button]] = (),
+        effect_id: str | None = None,
     ) -> None: ...
 
 
@@ -71,10 +78,18 @@ class TelegramSender:
         self._with_effect("sendMessage", payload, effect_id)
 
     def send_photo(
-        self, chat_id: int, png: bytes, caption: str, *, effect_id: str | None = None
+        self,
+        chat_id: int,
+        png: bytes,
+        caption: str,
+        *,
+        buttons: Sequence[Sequence[Button]] = (),
+        effect_id: str | None = None,
     ) -> None:
         # Multipart: the picture is uploaded with the message, nothing is hosted anywhere.
         data = {"chat_id": str(chat_id), "caption": caption, "parse_mode": "HTML"}
+        if buttons:
+            data["reply_markup"] = json.dumps(_keyboard(buttons))  # form fields are strings
         self._with_effect("sendPhoto", data, effect_id, {"photo": ("team.png", png, "image/png")})
 
     def _with_effect(

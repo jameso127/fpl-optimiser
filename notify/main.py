@@ -7,9 +7,10 @@ retry can send it.
 The pipeline runs daily, but this only sends when the next deadline is today (UK time);
 FORCE_NOTIFY=true sends anyway.
 
-Each user gets the team drawn on a pitch, captioned with the verdict and with an animated effect,
-then the details with link buttons to FPL. If the picture cannot be drawn, everything is sent as
-text instead: a missing picture must never cost the advice itself.
+Each user gets pictures, not paragraphs: the team on a pitch (captioned with the verdict, with an
+animated effect), then the transfers with each player's recent form, with link buttons to FPL.
+If the pictures cannot be drawn, everything is sent as text instead: a missing picture must never
+cost the advice itself.
 
     TELEGRAM_BOT_TOKEN=... TELEGRAM_CHAT_ID=... FPL_TEAM_ID=... uv run python -m notify.main
 """
@@ -24,9 +25,10 @@ from common.fpl_client import FplClient, FplSource
 from common.logging import configure_logging
 from common.storage import latest_gameweek, read_json, recommendation_path
 from common.users import UserRepository, get_user_repository
-from notify.format import details, format_recommendation, summary
+from notify.format import format_recommendation, notes, summary
 from notify.pitch import draw_pitch
 from notify.telegram import EFFECTS, Button, Sender, TelegramSender
+from notify.transfers import draw_transfers
 
 log = logging.getLogger(__name__)
 
@@ -48,22 +50,32 @@ def send_recommendation(
     rec: dict[str, Any],
     deadline: dt.datetime | None,
 ) -> None:
+    """The pitch picture captioned with the verdict, then (when there are transfers) the
+    transfers picture captioned with the assumptions; buttons on the last, effect on the first."""
     try:
-        png: bytes | None = draw_pitch(rec, deadline)
+        pitch, moves = draw_pitch(rec, deadline), draw_transfers(rec)
     except Exception:
-        png = None
-        log.exception("could not draw the pitch, sending text only")
-    if png is not None:
-        sender.send_photo(chat_id, png, summary(rec, deadline), effect_id=effect_for(rec))
-        messages = details(rec)
-    else:
+        log.exception("could not draw the pictures, sending text only")
         messages = format_recommendation(rec, deadline)
-    for i, message in enumerate(messages):
-        sender.send(
+        for i, message in enumerate(messages):
+            sender.send(
+                chat_id,
+                message,
+                buttons=buttons(settings) if i == len(messages) - 1 else (),
+                effect_id=effect_for(rec) if i == 0 else None,
+            )
+        return
+    if moves is None:  # holding: one picture says it all
+        photos = [(pitch, f"{summary(rec, deadline)}\n\n{notes(rec)}")]
+    else:
+        photos = [(pitch, summary(rec, deadline)), (moves, notes(rec))]
+    for i, (png, caption) in enumerate(photos):
+        sender.send_photo(
             chat_id,
-            message,
-            buttons=buttons(settings) if i == len(messages) - 1 else (),
-            effect_id=effect_for(rec) if png is None and i == 0 else None,
+            png,
+            caption,
+            buttons=buttons(settings) if i == len(photos) - 1 else (),
+            effect_id=effect_for(rec) if i == 0 else None,
         )
 
 

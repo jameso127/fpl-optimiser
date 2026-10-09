@@ -14,10 +14,16 @@ morning of the deadline. It runs on Google Cloud for under £2 a month.
 
 ## What you get
 
-On deadline day: a picture of your recommended team on a pitch (club shirts, expected points,
-fixture difficulty, captain and new signings marked) with an animated effect, then the details
-with buttons straight to FPL's transfer page. The long sections fold away until tapped. As
-text, it reads like this (from the test data, so the names are placeholders):
+On deadline day, two pictures and hardly any words:
+
+1. **Your team on a pitch**: club shirts, expected points, fixture difficulty, with the captain,
+   new signings and injury doubts marked. It arrives with an animated effect.
+2. **The transfers**: each swap as OUT ➜ IN with the expected-points swing and a bar chart of
+   both players' last five gameweeks, plus a chart of the gain for 0 to 4 transfers. Buttons
+   underneath go straight to FPL's transfer page.
+
+If the pictures can't be drawn, the same advice is sent as text, which reads like this (from the
+test data, so the names are placeholders):
 
 ```
 ⚽ Gameweek 3
@@ -35,20 +41,20 @@ text, it reads like this (from the test data, so the names are placeholders):
 
 🪑 Bench: P28, P58, P88, P03
 
-🔎 Starting XI · 39.0 xPts            (folded until tapped)
+🔎 Starting XI · 39.0 xPts
 P64 C08 · 2.3 xPts
 ...
 🆕 P71 (C) C08 · 7.0 xPts
 P44 (V) C05 · 4.0 xPts
 
-📊 Every option                        (folded)
+📊 Every option
 ▫️ Hold: 36.8 pts (+0.0)
 ▶️ 1 transfer: 39.0 pts (+2.3)
 ▫️ 2 transfers, -4 hit: 39.1 pts (+2.4)
 ▫️ 3 transfers, -8 hit: 36.5 pts (-0.2)
 Each transfer must add at least 0.5 pts to be worth it.
 
-ℹ️ Based on                            (folded)
+ℹ️ Based on
 • Your team as FPL shows it after the gameweek 2 deadline.
 • Free transfers left: 1 (estimated).
 ```
