@@ -14,53 +14,23 @@ morning of the deadline. It runs on Google Cloud for under £2 a month.
 
 ## What you get
 
-On deadline day, two pictures and hardly any words:
+On deadline day, two pictures and hardly any words (a real gameweek 6 recommendation):
 
-1. **Your team on a pitch**: club shirts, expected points, fixture difficulty, with the captain,
-   new signings and injury doubts marked. It arrives with an animated effect.
-2. **The transfers**: each swap as OUT ➜ IN with the expected-points swing and a bar chart of
-   both players' last five gameweeks. Buttons underneath go straight to FPL's transfer page.
+<p align="center">
+  <img src="docs/images/pitch.png" alt="The recommended team on a pitch" width="49%">
+  <img src="docs/images/transfers.png" alt="The recommended transfers with form charts" width="49%">
+</p>
 
-If the pictures can't be drawn, the same advice is sent as text, which reads like this (from the
-test data, so the names are placeholders):
+1. **Your team on a pitch**: club shirts, expected points (xPts) and fixture difficulty, with the
+   captain, new signings and injury doubts marked. It arrives with an animated 🔥 effect.
+2. **The transfers**: each swap as OUT ➜ IN with the expected-points gain, and a bar chart of
+   both players' last five gameweeks on the same scale. Buttons underneath open FPL's transfer
+   page.
 
-```
-⚽ Gameweek 3
-⏰ Deadline Fri 29 Aug, 18:30 UK
-
-✅ Make 1 transfer for +2.3 pts expected (no hit).
-
-🎖 Captain P71 · 7.0 xPts ×2
-     Vice: P44
-
-🔁 Transfers
-1. P45 ➜ P71  +1.2 pts
-     C05 £10.0m ➜ C08 £10.5m
-💰 Bank after: £0.0m
-
-🪑 Bench: P28, P58, P88, P03
-
-🔎 Starting XI · 39.0 xPts
-P64 C08 · 2.3 xPts
-...
-🆕 P71 (C) C08 · 7.0 xPts
-P44 (V) C05 · 4.0 xPts
-
-📊 Every option
-▫️ Hold: 36.8 pts (+0.0)
-▶️ 1 transfer: 39.0 pts (+2.3)
-▫️ 2 transfers, -4 hit: 39.1 pts (+2.4)
-▫️ 3 transfers, -8 hit: 36.5 pts (-0.2)
-Each transfer must add at least 0.5 pts to be worth it.
-
-ℹ️ Based on
-• Your team as FPL shows it after the gameweek 2 deadline.
-• Free transfers left: 1 (estimated).
-```
-
-Here, 2 transfers score slightly higher than 1, but the bot still says 1. Predictions are
-noisy, so every extra transfer has to earn at least half a point to be worth recommending.
-
+The bot only recommends a transfer if it adds at least half a point: predictions are noisy, so a
+marginal swap isn't worth the risk. Here the manager had 5 free transfers banked, so all five
+swaps come at no cost. If the pictures can't be drawn for any reason, the same advice is sent as
+text instead.
 ## Does the model work?
 
 Yes, and the backtest checks it honestly. Every gameweek is predicted by a model that has only
@@ -99,8 +69,8 @@ flowchart LR
 | `ingest` | Saves a snapshot of the official FPL API (players, teams, fixtures, results). |
 | `train` | Trains a model weekly, tests it, and only puts it live if it passes a quality gate. |
 | `predict` | Uses the live model to predict every player's points for the next gameweek. |
-| `optimise` | Finds each user's best team for 0, 1, 2… transfers, including the 4-point hits. |
-| `notify` | Sends each user their advice on Telegram, only on deadline days and never twice. |
+| `optimise` | Finds each user's best team for 0 to 5 transfers, including the 4-point hits. |
+| `notify` | Draws the pictures and sends them on Telegram, only on deadline days and never twice. |
 
 Each step is a small container that runs, does its job and stops, so it costs nothing while
 idle.
@@ -115,16 +85,19 @@ idle.
   baselines and the current model, and `predict` refuses to run if the features don't match.
 - **Handles the messy reality.** FPL hides transfers you've already made until the deadline
   passes, so users can tell the bot about them. Every message lists the assumptions it rests on.
+- **Pictures, not paragraphs.** The pitch and transfer graphics are drawn in Python with Pillow
+  and sent through the Telegram Bot API with link buttons and message effects. If drawing fails,
+  the advice still goes out as text.
 - **Safe to re-run.** Each job overwrites its own output, and sending is an atomic "claim", so a
   retry never sends a message twice.
-- **Tested.** About 180 tests using fake data sources, plus contract tests that run the same
+- **Tested.** About 200 tests using fake data sources, plus contract tests that run the same
   suite against the real database (Firestore emulator) and an in-memory version.
 - **Shipped through CI/CD.** Pull requests run lint, type checks, tests and Docker builds. Merging
   deploys only the parts that changed, using short-lived credentials and no stored keys.
 
 ## Tech stack
 
-Python 3.12 · pandas · LightGBM · SciPy (HiGHS MILP) · Parquet · Docker ·
+Python 3.12 · pandas · LightGBM · SciPy (HiGHS MILP) · Pillow · Telegram Bot API · Parquet · Docker ·
 Google Cloud (Cloud Run Jobs, Workflows, Scheduler, Cloud Storage, Firestore, Secret Manager) ·
 Terraform · GitHub Actions · uv · ruff · mypy · pytest
 
@@ -153,7 +126,7 @@ ml/         features, model, registry, promotion gate, monitoring, backtest
 train/      predict/     optimise/     notify/     one Cloud Run job each, with its Dockerfile
 common/     shared settings, logging, storage, FPL client, users store, deadline rule
 tests/      unit and contract tests, with fake data sources
-docs/       backtest report
+docs/       backtest report and the README pictures (redraw: uv run python -m scripts.readme_images)
 ```
 
 ## Related repos
