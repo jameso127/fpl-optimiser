@@ -85,13 +85,23 @@ Scheduler (weekly) -> Cloud Run Job: train
 - **Never run `gcloud run deploy`, `gcloud run jobs update` or `docker push` from a local
   machine.**
 - Auth uses Workload Identity Federation (no service account keys, no JSON keys in secrets).
-- `ci.yml` on every PR: ruff, mypy, pytest, docker build (no push).
-- `deploy.yml` on merge to `main`:
-  1. Build only components whose paths changed (path filters; changes to `/common` rebuild all).
-  2. Push images to Artifact Registry tagged with the git SHA. Never deploy `latest`.
-  3. Update the existing Cloud Run jobs / service to the new image
-     (`gcloud run jobs update --image ...`, `gcloud run deploy --image ...`).
+  The infra repo only lets `refs/heads/main` of this repo assume the deployer account.
+- Branches: feature branches open PRs into `dev` (the default branch). Promoting `dev` to `main`
+  is what deploys. A push to `main` deploys without CI running on that push, so `main` must
+  only change through a PR.
+- `ci.yml` on every PR (no cloud credentials): `uv sync --frozen`, ruff, mypy, pytest, the
+  user-repository contract tests against the Firestore emulator, and a docker build (no push)
+  of each changed component.
+- `deploy.yml` on push to `main`:
+  1. `scripts/changed_components.py` picks the components whose image contents changed
+     (`IMAGE_CONTENTS` must match each Dockerfile's `COPY` lines; `common/`, `pyproject.toml`,
+     `uv.lock`, `.python-version` rebuild all; a new branch builds all).
+  2. Push images to Artifact Registry as `$ARTIFACT_REGISTRY_REPO/<component>:<git sha>`.
+     Never `latest`.
+  3. `gcloud run jobs update fpl-<component> --image ...`. There is no Cloud Run service yet.
+  A component whose deploy failed is not retried by the next push unless it changes again.
 - Pin actions to a version or SHA. Use least-privilege `permissions:` on each workflow.
+- Tests must not depend on the developer's `.env` (CI has none): `tests/conftest.py` turns it off.
 
 ## Secrets
 
@@ -105,9 +115,11 @@ Scheduler (weekly) -> Cloud Run Job: train
 make setup      # install deps
 make lint       # ruff + mypy
 make test       # pytest
-make pipeline   # ingest -> predict -> optimise locally against ./data
+make pipeline   # ingest -> train -> predict -> optimise -> notify locally against ./data
+make train      # train, evaluate, register and maybe promote a model
+make backtest   # model vs ep_next backtest (no ablation)
 ```
-(TODO: keep in sync with the Makefile.)
+(Keep in sync with the Makefile.)
 
 ## How to work with me
 
