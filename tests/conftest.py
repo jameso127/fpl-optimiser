@@ -2,8 +2,15 @@ import numpy as np
 import pandas as pd
 import pytest
 
+from common.config import Settings
 from ml import gate
 from ml.registry import GateOutcome
+
+
+@pytest.fixture(autouse=True)
+def no_dotenv(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Never read the developer's .env: CI has none, so results must not depend on it."""
+    monkeypatch.setitem(Settings.model_config, "env_file", None)
 
 
 @pytest.fixture

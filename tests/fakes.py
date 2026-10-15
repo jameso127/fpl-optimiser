@@ -6,14 +6,54 @@ per club) can be built and improved. Expected points rise with price, with noise
 players are unavailable (0).
 """
 
+import json
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
 import numpy as np
 import pandas as pd
+import requests
+from requests.adapters import BaseAdapter
 
 from common.config import Settings
 from common.storage import gw_path, write_parquet
+
+Handler = Callable[[requests.PreparedRequest], requests.Response]
+
+
+class _HandlerAdapter(BaseAdapter):
+    def __init__(self, handler: Handler) -> None:
+        super().__init__()
+        self._handler = handler
+
+    def send(
+        self, request: requests.PreparedRequest, *args: Any, **kwargs: Any
+    ) -> requests.Response:
+        response = self._handler(request)
+        response.request = request
+        response.url = request.url or ""
+        return response
+
+    def close(self) -> None:
+        pass
+
+
+def http_session(handler: Handler) -> requests.Session:
+    """A requests session that never touches the network: `handler` answers every request."""
+    session = requests.Session()
+    session.mount("https://", _HandlerAdapter(handler))
+    session.mount("http://", _HandlerAdapter(handler))
+    return session
+
+
+def http_response(status: int, body: Any = None) -> requests.Response:
+    response = requests.Response()
+    response.status_code = status
+    response._content = b"" if body is None else json.dumps(body).encode()
+    response.headers["Content-Type"] = "application/json"
+    return response
+
 
 SEASON = "2025-26"
 GAMEWEEK = 3
