@@ -3,9 +3,9 @@ from collections import Counter
 from pathlib import Path
 from typing import Any
 
-import httpx
 import pandas as pd
 import pytest
+import requests
 
 from common.config import Settings
 from common.fpl_client import FplClient
@@ -155,14 +155,11 @@ def test_the_pool_has_positive_scorers_and_everyone_already_owned() -> None:
 def test_the_client_exposes_the_per_manager_endpoints() -> None:
     seen: list[str] = []
 
-    def handler(request: httpx.Request) -> httpx.Response:
-        seen.append(request.url.path)
-        return httpx.Response(200, json={"ok": True})
+    def handler(request: requests.PreparedRequest) -> requests.Response:
+        seen.append(request.path_url)
+        return fakes.http_response(200, {"ok": True})
 
-    client = FplClient(
-        Settings(fpl_min_interval_seconds=0),
-        client=httpx.Client(transport=httpx.MockTransport(handler)),
-    )
+    client = FplClient(Settings(fpl_min_interval_seconds=0), session=fakes.http_session(handler))
     client.entry_history(9)
     client.entry_picks(9, 5)
     client.entry_transfers(9)

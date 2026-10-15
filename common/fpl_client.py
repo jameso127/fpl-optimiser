@@ -1,10 +1,14 @@
-"""Polite FPL API client: throttled, cached, exponential backoff, descriptive User-Agent."""
+"""Polite FPL API client: throttled, cached, exponential backoff, descriptive User-Agent.
+
+Uses `requests`, not `httpx`: from Cloud Run, the FPL API answered httpx with 403 Forbidden
+(whatever the User-Agent) while a requests-based function in the same project was served.
+"""
 
 import logging
 import time
 from typing import Any, Protocol
 
-import httpx
+import requests
 
 from common.config import Settings
 
@@ -25,7 +29,7 @@ class FplClient:
     def __init__(
         self,
         settings: Settings,
-        client: httpx.Client | None = None,
+        session: requests.Session | None = None,
         max_retries: int = 5,
         backoff_base: float = 1.0,
         base_url: str | None = None,
@@ -35,9 +39,8 @@ class FplClient:
         self._min_interval = settings.fpl_min_interval_seconds
         self._max_retries = max_retries
         self._backoff_base = backoff_base
-        self._client = client or httpx.Client(
-            headers={"User-Agent": settings.fpl_user_agent}, timeout=30.0
-        )
+        self._session = session or requests.Session()
+        self._session.headers["User-Agent"] = settings.fpl_user_agent
         self._cache: dict[str, Any] = {}
         self._last_request = 0.0
 
@@ -53,8 +56,8 @@ class FplClient:
         for attempt in range(self._max_retries + 1):
             self._throttle()
             try:
-                response = self._client.get(url)
-            except httpx.TransportError as exc:
+                response = self._session.get(url, timeout=30.0)
+            except (requests.ConnectionError, requests.Timeout) as exc:
                 error: str = repr(exc)
             else:
                 self._last_request = time.monotonic()
