@@ -32,7 +32,8 @@ If I ask for a job/service that doesn't exist yet, say so rather than assuming i
 ```
 Scheduler (daily 10:00 UK) -> Workflows -> Cloud Run Jobs: ingest -> predict -> optimise -> notify
    all four jobs run every day; notify only sends when the next deadline is today
-   (common/schedule.py). FORCE_NOTIFY=true sends anyway.
+   (common/schedule.py). FORCE_NOTIFY=true sends anyway. NOTIFY_TEST=true sends now to
+   users marked `tester` only, recording nothing (the workflow's `{"test":true}` run sets it).
 Scheduler (weekly) -> Cloud Run Job: train
                                    |
                            Cloud Storage (Parquet)
@@ -43,7 +44,8 @@ Scheduler (weekly) -> Cloud Run Job: train
 - Per-user work (optimise, notify) is cheap; optimise runs daily, notify sends on deadline days.
 - Storage is Parquet in GCS (no BigQuery unless asked). Users (chat id, FPL team id, settings,
   declared transfers, invites) are in Firestore behind a repository port, with an in-memory
-  implementation for tests and single-user mode. Notifications go out over the Telegram Bot API.
+  implementation for tests and single-user mode. A user document is found by its `chat_id`
+  field, never by its document id. Notifications go out over the Telegram Bot API.
 
 ## Layout
 

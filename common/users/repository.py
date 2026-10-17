@@ -28,7 +28,9 @@ class UserRepository(Protocol):
         ...
 
     # --- transfers the user says they have already made --------------------------------
-    def add_declared(self, chat_id: int, transfer: DeclaredTransfer) -> None: ...
+    def add_declared(self, chat_id: int, transfer: DeclaredTransfer) -> None:
+        """Raises LookupError for a chat that is not registered."""
+        ...
 
     def declared(self, chat_id: int, season: str, gameweek: int) -> list[DeclaredTransfer]:
         """In the order they were declared."""

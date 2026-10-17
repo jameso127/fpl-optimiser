@@ -446,6 +446,31 @@ def test_a_user_with_no_recommendation_is_reported_not_skipped_silently(
     assert {chat for chat, _ in sender.sent} == {2}
 
 
+def test_a_test_send_goes_to_testers_only_and_does_not_block_the_real_one(
+    settings: Settings, world: fakes.World
+) -> None:
+    _recommend(settings, world, 11)
+    _recommend(settings, world, 22)
+    repo = _repo(User(chat_id=1, fpl_team_id=11, tester=True), User(chat_id=2, fpl_team_id=22))
+    test = RecordingSender()
+
+    assert notify_run(settings, repo, test, test=True) == 1
+    assert notify_run(settings, repo, test, test=True) == 1  # test sends can be repeated
+    assert {chat for chat, _ in test.sent} == {1}
+
+    real = RecordingSender()
+    assert notify_run(settings, repo, real) == 2  # nothing was recorded by the test sends
+    assert {chat for chat, _ in real.sent} == {1, 2}
+
+
+def test_a_test_send_with_no_testers_sends_nothing(settings: Settings, world: fakes.World) -> None:
+    _recommend(settings, world, 11)
+    sender = RecordingSender()
+
+    assert notify_run(settings, _repo(User(chat_id=1, fpl_team_id=11)), sender, test=True) == 0
+    assert sender.sent == []
+
+
 def test_it_only_sends_on_the_day_of_the_next_deadline() -> None:
     # The fake API's next deadline (gameweek 3) is 2025-08-29 17:30 UTC.
     source = fakes.FakeFplSource()

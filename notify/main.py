@@ -5,7 +5,8 @@ running two copies, does not send duplicates. If sending fails, the claim is rel
 retry can send it.
 
 The pipeline runs daily, but this only sends when the next deadline is today (UK time);
-FORCE_NOTIFY=true sends anyway.
+FORCE_NOTIFY=true sends anyway. NOTIFY_TEST=true is a test send: now, only to users marked
+`tester`, and without recording the gameweek as sent, so the real message still goes out.
 
 Each user gets pictures, not paragraphs: the team on a pitch (captioned with the verdict, with an
 animated effect), then the transfers with each player's recent form, with link buttons to FPL.
@@ -94,13 +95,24 @@ def next_deadline(source: FplSource, now: dt.datetime) -> schedule.Schedule | No
 
 
 def run(
-    settings: Settings, repo: UserRepository, sender: Sender, deadline: dt.datetime | None = None
+    settings: Settings,
+    repo: UserRepository,
+    sender: Sender,
+    deadline: dt.datetime | None = None,
+    *,
+    test: bool = False,
 ) -> int:
     """Send to every active user. Returns how many were sent; raises if any failed.
-    The deadline, when known, is shown at the top of the message."""
+    The deadline, when known, is shown at the top of the message. A test run sends only to
+    testers and claims nothing, so it never blocks the real send."""
     season, gameweek = latest_gameweek(settings, "predictions", "run predict and optimise first")
+    users = repo.list_active()
+    if test:
+        users = [u for u in users if u.tester]
+        if not users:
+            log.warning("test send, but no active user is marked tester")
     sent = failed = 0
-    for user in repo.list_active():
+    for user in users:
         assert user.fpl_team_id is not None  # list_active only returns users with a team
         path = recommendation_path(season, gameweek, user.fpl_team_id)
         try:
@@ -109,18 +121,19 @@ def run(
             failed += 1
             log.error("no recommendation to send", extra={"team": user.fpl_team_id, "path": path})
             continue
-        if not repo.claim_notification(user.chat_id, season, gameweek):
+        if not test and not repo.claim_notification(user.chat_id, season, gameweek):
             log.info("already notified", extra={"gameweek": gameweek})
             continue
         try:
             send_recommendation(settings, sender, user.chat_id, rec, deadline)
         except Exception:
-            repo.release_notification(user.chat_id, season, gameweek)
+            if not test:
+                repo.release_notification(user.chat_id, season, gameweek)
             failed += 1
             log.exception("send failed", extra={"team": user.fpl_team_id})
             continue
         sent += 1
-        log.info("notified", extra={"team": user.fpl_team_id, "gameweek": gameweek})
+        log.info("notified", extra={"team": user.fpl_team_id, "gameweek": gameweek, "test": test})
     if failed:
         raise RuntimeError(f"{failed} notification(s) failed")
     return sent
@@ -132,12 +145,12 @@ def main() -> None:
     if settings.telegram_bot_token is None:
         raise RuntimeError("set TELEGRAM_BOT_TOKEN")
     plan = next_deadline(FplClient(settings), dt.datetime.now(dt.UTC))
-    if not (plan and plan.deadline_day) and not settings.force_notify:
+    if not (plan and plan.deadline_day) and not (settings.force_notify or settings.notify_test):
         log.info("the next deadline is not today, so nothing was sent")
         return
     sender = TelegramSender(settings.telegram_bot_token.get_secret_value())
     deadline = plan.deadline if plan else None  # shown in the message, also on forced sends
-    run(settings, get_user_repository(settings), sender, deadline)
+    run(settings, get_user_repository(settings), sender, deadline, test=settings.notify_test)
 
 
 if __name__ == "__main__":

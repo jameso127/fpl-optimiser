@@ -43,6 +43,8 @@ class InMemoryUserRepository:
 
     def add_declared(self, chat_id: int, transfer: DeclaredTransfer) -> None:
         with self._lock:
+            if chat_id not in self._users:
+                raise LookupError("no user with this chat id")
             self._declared.setdefault(chat_id, []).append(transfer.model_copy())
 
     def declared(self, chat_id: int, season: str, gameweek: int) -> list[DeclaredTransfer]:

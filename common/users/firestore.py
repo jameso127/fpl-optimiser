@@ -2,9 +2,13 @@
 
 Layout (Native mode, scale-to-zero, free tier at this size):
 
-    users/{chat_id}                    a User
-    users/{chat_id}/declared/{auto}    a DeclaredTransfer (TTL: expires_at)
+    users/{any id}                     a User, found by its chat_id field
+    users/{any id}/declared/{auto}     a DeclaredTransfer (TTL: expires_at)
     invites/{code}                     an Invite           (TTL: expires_at)
+
+A user document's id means nothing: the chat_id field is the key, so documents added by hand
+in the console can keep an auto id. Lookups are equality queries on chat_id (single-field
+indexes are automatic). If two documents ever share a chat_id, the first one is used.
 
 Operations that must be atomic (redeeming an invite, claiming a notification, undoing a
 declared transfer) run in Firestore transactions. Queries use only equality filters, which
@@ -15,6 +19,7 @@ tests/test_users_contract.py); set FIRESTORE_EMULATOR_HOST to run it.
 """
 
 import datetime as dt
+import logging
 from typing import Any
 
 from google.cloud import firestore
@@ -30,6 +35,8 @@ from common.users.models import (
 
 _BATCH = 400  # Firestore allows 500 writes per batch
 
+log = logging.getLogger(__name__)
+
 
 def _data(snapshot: Any) -> dict[str, Any]:
     """A snapshot's fields (empty for a missing document)."""
@@ -42,30 +49,39 @@ class FirestoreUserRepository:
         self._db = client
 
     # --- references -----------------------------------------------------------------------
-    def _user(self, chat_id: int) -> firestore.DocumentReference:
-        return self._db.collection("users").document(str(chat_id))
+    def _find(self, chat_id: int, txn: firestore.Transaction | None = None) -> Any | None:
+        """The snapshot of the user document with this chat_id, or None."""
+        query = self._db.collection("users").where(filter=FieldFilter("chat_id", "==", chat_id))
+        docs = list(query.limit(2).stream(transaction=txn))
+        if len(docs) > 1:
+            log.warning("several user documents share a chat id; using the first")
+        return docs[0] if docs else None
 
-    def _declared_collection(self, chat_id: int) -> firestore.CollectionReference:
-        return self._user(chat_id).collection("declared")
-
-    def _declared_query(self, chat_id: int, season: str, gameweek: int) -> firestore.Query:
+    def _declared_query(
+        self, user: firestore.DocumentReference, season: str, gameweek: int
+    ) -> firestore.Query:
         return (
-            self._declared_collection(chat_id)
+            user.collection("declared")
             .where(filter=FieldFilter("season", "==", season))
             .where(filter=FieldFilter("gameweek", "==", gameweek))
         )
 
     # --- users ----------------------------------------------------------------------------
     def get(self, chat_id: int) -> User | None:
-        snap = self._user(chat_id).get()
-        return User.model_validate(_data(snap)) if snap.exists else None
+        snap = self._find(chat_id)
+        return User.model_validate(_data(snap)) if snap else None
 
     def save(self, user: User) -> None:
-        self._user(user.chat_id).set(user.model_dump())
+        snap = self._find(user.chat_id)
+        ref = snap.reference if snap else self._db.collection("users").document()
+        ref.set(user.model_dump())
 
     def delete(self, chat_id: int) -> None:
-        self._delete_all(self._declared_collection(chat_id).stream())
-        self._user(chat_id).delete()
+        snap = self._find(chat_id)
+        if snap is None:
+            return
+        self._delete_all(snap.reference.collection("declared").stream())
+        snap.reference.delete()
 
     def list_active(self) -> list[User]:
         query = self._db.collection("users").where(filter=FieldFilter("active", "==", True))
@@ -74,15 +90,24 @@ class FirestoreUserRepository:
 
     # --- declared transfers ---------------------------------------------------------------
     def add_declared(self, chat_id: int, transfer: DeclaredTransfer) -> None:
-        self._declared_collection(chat_id).add(transfer.model_dump())
+        snap = self._find(chat_id)
+        if snap is None:
+            raise LookupError("no user with this chat id")
+        snap.reference.collection("declared").add(transfer.model_dump())
 
     def declared(self, chat_id: int, season: str, gameweek: int) -> list[DeclaredTransfer]:
-        docs = self._declared_query(chat_id, season, gameweek).stream()
+        snap = self._find(chat_id)
+        if snap is None:
+            return []
+        docs = self._declared_query(snap.reference, season, gameweek).stream()
         found = [DeclaredTransfer.model_validate(_data(d)) for d in docs]
         return sorted(found, key=lambda t: t.declared_at)
 
     def undo_declared(self, chat_id: int, season: str, gameweek: int) -> DeclaredTransfer | None:
-        query = self._declared_query(chat_id, season, gameweek)
+        snap = self._find(chat_id)
+        if snap is None:
+            return None
+        query = self._declared_query(snap.reference, season, gameweek)
 
         @firestore.transactional
         def undo(txn: firestore.Transaction) -> DeclaredTransfer | None:
@@ -97,7 +122,10 @@ class FirestoreUserRepository:
         return result
 
     def clear_declared(self, chat_id: int, season: str, gameweek: int) -> int:
-        return self._delete_all(self._declared_query(chat_id, season, gameweek).stream())
+        snap = self._find(chat_id)
+        if snap is None:
+            return 0
+        return self._delete_all(self._declared_query(snap.reference, season, gameweek).stream())
 
     def _delete_all(self, docs: Any) -> int:
         batch, pending, total = self._db.batch(), 0, 0
@@ -119,12 +147,11 @@ class FirestoreUserRepository:
     def redeem_invite(self, code: str, chat_id: int, now: dt.datetime) -> bool:
         if not is_valid_invite_code(code):
             return False
-        user_ref = self._user(chat_id)
         invite_ref = self._db.collection("invites").document(code)
 
         @firestore.transactional
         def redeem(txn: firestore.Transaction) -> bool:
-            if user_ref.get(transaction=txn).exists:
+            if self._find(chat_id, txn):
                 return True  # already registered: nothing to spend
             snap = invite_ref.get(transaction=txn)
             if not snap.exists:
@@ -133,7 +160,7 @@ class FirestoreUserRepository:
             if invite.uses_left <= 0 or invite.expires_at <= now:
                 return False
             txn.update(invite_ref, {"uses_left": invite.uses_left - 1})
-            txn.set(user_ref, User(chat_id=chat_id).model_dump())
+            txn.set(self._db.collection("users").document(), User(chat_id=chat_id).model_dump())
             return True
 
         result: bool = redeem(self._db.transaction())
@@ -142,14 +169,13 @@ class FirestoreUserRepository:
     # --- notifications --------------------------------------------------------------------
     def claim_notification(self, chat_id: int, season: str, gameweek: int) -> bool:
         key = gameweek_key(season, gameweek)
-        ref = self._user(chat_id)
 
         @firestore.transactional
         def claim(txn: firestore.Transaction) -> bool:
-            snap = ref.get(transaction=txn)
-            if not snap.exists or _data(snap).get("last_notified") == key:
+            snap = self._find(chat_id, txn)
+            if snap is None or _data(snap).get("last_notified") == key:
                 return False
-            txn.update(ref, {"last_notified": key})
+            txn.update(snap.reference, {"last_notified": key})
             return True
 
         result: bool = claim(self._db.transaction())
@@ -157,12 +183,11 @@ class FirestoreUserRepository:
 
     def release_notification(self, chat_id: int, season: str, gameweek: int) -> None:
         key = gameweek_key(season, gameweek)
-        ref = self._user(chat_id)
 
         @firestore.transactional
         def release(txn: firestore.Transaction) -> None:
-            snap = ref.get(transaction=txn)
-            if snap.exists and _data(snap).get("last_notified") == key:
-                txn.update(ref, {"last_notified": None})
+            snap = self._find(chat_id, txn)
+            if snap and _data(snap).get("last_notified") == key:
+                txn.update(snap.reference, {"last_notified": None})
 
         release(self._db.transaction())
