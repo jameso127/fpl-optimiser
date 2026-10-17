@@ -106,6 +106,11 @@ def test_clearing_reports_how_many_were_removed(repo: UserRepository) -> None:
     assert len(repo.declared(1, "2026-27", 7)) == 1
 
 
+def test_declaring_for_an_unregistered_chat_is_refused(repo: UserRepository) -> None:
+    with pytest.raises(LookupError):
+        repo.add_declared(1, _transfer())
+
+
 def test_deleting_a_user_removes_everything_about_them(repo: UserRepository) -> None:
     repo.save(User(chat_id=1, fpl_team_id=5))
     repo.save(User(chat_id=2, fpl_team_id=6))
@@ -159,6 +164,35 @@ def test_a_gameweek_can_be_claimed_for_notification_only_once(repo: UserReposito
     assert repo.claim_notification(1, "2026-27", 7) is False
 
 
+def test_a_firestore_user_is_found_by_chat_id_whatever_the_document_id() -> None:
+    # Users added by hand in the console get an auto id; the chat_id field is what counts.
+    if not EMULATOR:
+        pytest.skip("set FIRESTORE_EMULATOR_HOST to run the Firestore leg")
+    from google.cloud import firestore
+
+    from common.users.firestore import FirestoreUserRepository
+
+    httpx.delete(f"http://{EMULATOR}/emulator/v1/projects/{PROJECT}/databases/(default)/documents")
+    client = firestore.Client(project=PROJECT)
+    client.collection("users").document("xQH-auto-id").set(
+        {"chat_id": 7, "fpl_team_id": 99, "active": True}
+    )
+    repo = FirestoreUserRepository(client)
+
+    got = repo.get(7)
+    assert got is not None and got.fpl_team_id == 99
+    assert [u.chat_id for u in repo.list_active()] == [7]
+    assert repo.claim_notification(7, "2026-27", 6) is True
+    assert repo.claim_notification(7, "2026-27", 6) is False
+    repo.add_declared(7, _transfer())
+    assert len(repo.declared(7, "2026-27", 6)) == 1
+
+    repo.save(User(chat_id=7, fpl_team_id=100))  # updates that document, adds no second one
+    assert [d.id for d in client.collection("users").stream()] == ["xQH-auto-id"]
+    repo.delete(7)
+    assert list(client.collection("users").stream()) == []
+
+
 def test_invite_codes_use_a_safe_alphabet() -> None:
     assert is_valid_invite_code("abc-DEF_123")
     for bad in ("short", "has space", "slash/inside", "x" * 65, "", "émoji-✓-code"):
@@ -181,5 +215,5 @@ def test_single_user_mode_has_just_the_owner() -> None:
     settings = Settings(users_backend="memory", telegram_chat_id=7, fpl_team_id=99)
     users = get_user_repository(settings).list_active()
 
-    assert [(u.chat_id, u.fpl_team_id) for u in users] == [(7, 99)]
+    assert [(u.chat_id, u.fpl_team_id, u.tester) for u in users] == [(7, 99, True)]
     assert get_user_repository(Settings(users_backend="memory")).list_active() == []
