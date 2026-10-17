@@ -33,6 +33,7 @@ class User(BaseModel):
     chat_id: int
     fpl_team_id: int | None = None
     active: bool = True  # /pause sets this to false
+    tester: bool = False  # gets test sends (NOTIFY_TEST=true); set by hand in Firestore
     max_transfers: int | None = None  # personal override of how many transfers to consider
     free_transfers_override: int | None = None  # when our estimate of their free transfers is wrong
     created_at: dt.datetime = Field(default_factory=utcnow)

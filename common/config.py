@@ -15,6 +15,9 @@ class Settings(BaseSettings):
 
     # Notify only: send even when the next deadline is not today (manual runs).
     force_notify: bool = False
+    # Notify only: a test send. Sends now, only to users marked `tester`, and records nothing,
+    # so the real deadline-day message still goes out.
+    notify_test: bool = False
 
     # Model lifecycle: train once (job `train`), serve many times (job `predict`).
     model_name: str = "xpts-hurdle"

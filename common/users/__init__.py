@@ -18,11 +18,12 @@ __all__ = [
 
 def get_user_repository(settings: Settings) -> UserRepository:
     """Firestore for registered users; in memory for single-user mode, where the only user is
-    the owner named in the settings (TELEGRAM_CHAT_ID and FPL_TEAM_ID)."""
+    the owner named in the settings (TELEGRAM_CHAT_ID and FPL_TEAM_ID), who also gets test sends."""
     if settings.users_backend == "memory":
         repo = InMemoryUserRepository()
         if settings.telegram_chat_id is not None and settings.fpl_team_id is not None:
-            repo.save(User(chat_id=settings.telegram_chat_id, fpl_team_id=settings.fpl_team_id))
+            owner = User(chat_id=settings.telegram_chat_id, fpl_team_id=settings.fpl_team_id)
+            repo.save(owner.model_copy(update={"tester": True}))
         return repo
     from google.cloud import firestore
 
