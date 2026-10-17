@@ -10,7 +10,7 @@
 
 Every gameweek it predicts how many points each of the ~700 Premier League players will score,
 works out the best transfers for your team, and messages you the advice on Telegram on the
-morning of the deadline. It runs on Google Cloud for under £2 a month.
+morning of the deadline. It runs on Google Cloud for well under £2 a month (about 10p so far).
 
 > **In short:** an end-to-end ML project. It covers data ingestion, a trained and backtested
 > model, a mathematical optimiser and a deployed, scheduled pipeline, with CI/CD and
@@ -21,12 +21,12 @@ morning of the deadline. It runs on Google Cloud for under £2 a month.
 On deadline day, two pictures and hardly any words (a real gameweek 6 recommendation):
 
 <p align="center">
-  <img src="docs/images/pitch.png" alt="The recommended team on a pitch" width="49%">
-  <img src="docs/images/transfers.png" alt="The recommended transfers with form charts" width="49%">
+  <img src="docs/images/pitch.png" alt="The recommended team on a pitch" width="62%">
+  <img src="docs/images/transfers.png" alt="The recommended transfers with form charts" width="35.3%">
 </p>
 
 1. **Your team on a pitch**: club shirts, expected points (xPts) and fixture difficulty, with the
-   captain, new signings and injury doubts marked. It arrives with an animated 🔥 effect.
+   captain, new signings and injury doubts marked.
 2. **The transfers**: each swap as OUT ➜ IN with the expected-points gain, and a bar chart of
    both players' last five gameweeks on the same scale. Buttons underneath open FPL's transfer
    page.
@@ -35,6 +35,7 @@ The bot only recommends a transfer if it adds at least half a point: predictions
 marginal swap isn't worth the risk. Here the manager had 5 free transfers banked, so all five
 swaps come at no cost. If the pictures can't be drawn for any reason, the same advice is sent as
 text instead.
+
 ## Does the model work?
 
 Yes, and the backtest checks it honestly. Every gameweek is predicted by a model that has only
@@ -47,13 +48,6 @@ seen earlier data ([full report](docs/backtest.md)):
 
 \* on the 9 gameweeks where FPL's pre-deadline figure is available.
 
-Honest caveat: it only just beats my first, simpler model (4.45 vs 4.40), and most of the extra
-features don't earn their place yet. They're candidates to prune as more data comes in.
-
-One lesson from building it: an early version made FPL's own numbers look better than the
-model. That turned out to be **data leakage**: the archived value secretly contained the result
-it was meant to predict. The backtest now checks for this leak on every run.
-
 ## How it works
 
 ```mermaid
@@ -65,7 +59,9 @@ flowchart LR
     O --> N[notify<br/>Telegram, deadline days only]
     T[train<br/>weekly] -. promotes model .-> P
     GCS[(Cloud Storage<br/>data + models)]
+    FS[(Firestore<br/>users)]
     I & P & O & T --- GCS
+    O & N --- FS
 ```
 
 | Step | What it does |
@@ -76,8 +72,19 @@ flowchart LR
 | `optimise` | Finds each user's best team for 0 to 5 transfers, including the 4-point hits. |
 | `notify` | Draws the pictures and sends them on Telegram, only on deadline days and never twice. |
 
-Each step is a small container that runs, does its job and stops, so it costs nothing while
-idle.
+The whole pipeline runs every morning, so the data and advice stay fresh, but `notify` only sends
+when the next deadline is that day. Each step is a small container that runs, does its job and
+stops, so it costs nothing while idle.
+
+**Test run.** To see the message without waiting for a deadline, start the pipeline with a test
+flag. It sends straight away, but only to users marked `tester: true`, and records nothing, so
+the real deadline-day message still goes out:
+
+```
+gcloud workflows run fpl-pipeline --location europe-west2 --data='{"test":true}'
+```
+
+(In Windows PowerShell, escape the quotes: `--data='{\"test\":true}'`.)
 
 ## Engineering highlights
 
@@ -90,14 +97,35 @@ idle.
 - **Handles the messy reality.** FPL hides transfers you've already made until the deadline
   passes, so users can tell the bot about them. Every message lists the assumptions it rests on.
 - **Pictures, not paragraphs.** The pitch and transfer graphics are drawn in Python with Pillow
-  and sent through the Telegram Bot API with link buttons and message effects. If drawing fails,
-  the advice still goes out as text.
-- **Safe to re-run.** Each job overwrites its own output, and sending is an atomic "claim", so a
-  retry never sends a message twice.
+  and sent through the Telegram Bot API with link buttons. If drawing fails, the advice still
+  goes out as text.
+- **Safe to re-run.** Each job overwrites its own output, and sending is an atomic "claim" in a
+  Firestore transaction, so a retry never sends a message twice.
 - **Tested.** About 200 tests using fake data sources, plus contract tests that run the same
   suite against the real database (Firestore emulator) and an in-memory version.
 - **Shipped through CI/CD.** Pull requests run lint, type checks, tests and Docker builds. Merging
   deploys only the parts that changed, using short-lived credentials and no stored keys.
+
+## Lessons from building it
+
+- **Data leakage.** An early version made FPL's own numbers look better than the model. The
+  archived value turned out to contain the result it was meant to predict. The backtest now
+  checks for this leak on every run.
+- **Where the code runs matters.** The FPL API answered every request from Cloud Run in London
+  (europe-west2) with a 403, whatever the HTTP client or headers. The same container in Belgium
+  (europe-west1) works, so the jobs run there.
+
+## What it costs
+
+The target is under £2 a month; in practice it is about 10p, nearly all of it storing the
+container images. Everything else fits in Google Cloud's free tiers:
+
+| Part | Usage | Monthly cost |
+|---|---|---|
+| Artifact Registry | ~1.4 GB of images (the newest 5 versions are kept) | ~£0.08 |
+| Cloud Run jobs | ~2 minutes a day, plus a weekly training run | free tier |
+| Cloud Storage | ~15 MB of Parquet and models | under 1p |
+| Workflows, Scheduler, Firestore, Secret Manager | a few calls a day | free tier |
 
 ## Tech stack
 
@@ -108,7 +136,8 @@ Terraform · GitHub Actions · uv · ruff · mypy · pytest
 ## Run it yourself
 
 You need [uv](https://docs.astral.sh/uv/). Copy `.env.example` to `.env` and fill in your FPL
-team id, a Telegram bot token (from @BotFather) and your chat id.
+team id, a Telegram bot token (from @BotFather) and your chat id. Locally it runs in
+single-user mode: you are the only user, so no database is needed.
 
 ```
 uv sync
@@ -117,10 +146,22 @@ uv run python -m ingest.main      # today's FPL data -> ./data
 uv run python -m train.main       # train, test and (maybe) promote a model
 uv run python -m predict.main
 uv run python -m optimise.main
-FORCE_NOTIFY=true uv run python -m notify.main   # send the message now
+NOTIFY_TEST=true uv run python -m notify.main   # send the message now
 ```
 
-`make pipeline` runs ingest through optimise; `make lint` and `make test` run the checks.
+`make pipeline` runs all of these except the history import; `make lint` and `make test` run the
+checks.
+
+## Users
+
+In the cloud, users live in Firestore (`users` collection), one document each:
+
+| Field | Type | Meaning |
+|---|---|---|
+| `chat_id` | number | their Telegram chat id (this is the key; the document id doesn't matter) |
+| `fpl_team_id` | number | their FPL team id |
+| `active` | boolean | `false` pauses their messages |
+| `tester` | boolean | optional: `true` to receive test runs |
 
 ## Repo layout
 
@@ -136,13 +177,6 @@ docs/       backtest report and the README pictures (redraw: uv run python -m sc
 ## Related repos
 
 - [fpl-optimiser-infra](https://github.com/jameso127/fpl-optimiser-infra): all the Google Cloud
-  infrastructure as Terraform (jobs, scheduler, workflow, storage, IAM, budget alerts).
-
-## Status and next steps
-
-- **Running:** all five jobs, deployed to Google Cloud by GitHub Actions on a daily schedule.
-- **Next:** an interactive Telegram bot (sign up with an invite, `/xi`, tell it about your
-  transfers) and a web frontend.
-- **Known limit:** the pipeline runs at 10:00 UK, so a deadline earlier than that is missed.
+  infrastructure as Terraform (jobs, scheduler, workflow, storage, Firestore, IAM).
 
 `archive/` holds the original single-file version of the optimiser, kept for comparison.
