@@ -243,6 +243,28 @@ def _sender(handler: Any) -> TelegramSender:
     return TelegramSender(TOKEN, httpx.Client(transport=httpx.MockTransport(handler)))
 
 
+def test_the_default_client_uses_ipv4_only_and_gives_up_connecting_quickly() -> None:
+    """Cloud Run has no IPv6 egress: an IPv6 attempt at api.telegram.org hung for 30 seconds."""
+    client = telegram.ipv4_client()
+
+    pool = client._transport._pool  # type: ignore[attr-defined]
+    assert pool._local_address == "0.0.0.0"
+    assert client.timeout.connect == 5
+
+
+def test_typing_posts_a_chat_action() -> None:
+    seen: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        return httpx.Response(200, json={"ok": True, "result": True})
+
+    _sender(handler).typing(7)
+
+    assert seen[0].url.path.endswith("/sendChatAction")
+    assert json.loads(seen[0].content) == {"chat_id": 7, "action": "typing"}
+
+
 def test_a_message_is_posted_as_html_to_the_chat() -> None:
     seen: list[httpx.Request] = []
 

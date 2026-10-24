@@ -11,7 +11,7 @@ from bot.handlers import FULL, HELP, reply
 from bot.main import Bot, Handler, Server
 from bot.webhook import SECRET_HEADER, register, webhook_secret
 from common.config import Settings
-from common.telegram import Button
+from common.telegram import Button, TelegramError
 from common.users import InMemoryUserRepository, User
 from tests import fakes
 
@@ -38,8 +38,15 @@ class FakeEntries:
 
 
 class RecordingSender:
-    def __init__(self) -> None:
+    def __init__(self, typing_fails: bool = False) -> None:
         self.sent: list[tuple[int, str]] = []
+        self.calls: list[str] = []
+        self.typing_fails = typing_fails
+
+    def typing(self, chat_id: int) -> None:
+        self.calls.append("typing")
+        if self.typing_fails:
+            raise TelegramError("Telegram refused the message (429): Too Many Requests")
 
     def send(
         self,
@@ -49,6 +56,7 @@ class RecordingSender:
         buttons: Sequence[Sequence[Button]] = (),
         effect_id: str | None = None,
     ) -> None:
+        self.calls.append("send")
         self.sent.append((chat_id, text))
 
     def send_photo(
@@ -197,6 +205,32 @@ def test_updates_that_are_not_private_text_messages_are_ignored(update: dict[str
 
     assert reply(update, repo, FakeEntries(), 50) is None
     assert repo.count() == 0
+
+
+# --- handling an update ------------------------------------------------------------------------
+
+
+def test_typing_is_shown_before_the_reply_is_worked_out_and_sent() -> None:
+    sender = RecordingSender()
+    Bot(Settings(), InMemoryUserRepository(), sender, "s").handle(_update("/start"))
+
+    assert sender.calls == ["typing", "send"]
+
+
+def test_a_failed_typing_indicator_never_costs_the_reply() -> None:
+    sender = RecordingSender(typing_fails=True)
+    Bot(Settings(), InMemoryUserRepository(), sender, "s").handle(_update("/start"))
+
+    assert sender.calls == ["typing", "send"] and len(sender.sent) == 1
+
+
+def test_group_messages_get_no_typing_and_no_reply() -> None:
+    sender = RecordingSender()
+    Bot(Settings(), InMemoryUserRepository(), sender, "s").handle(
+        _update("/start", chat_type="group")
+    )
+
+    assert sender.calls == []
 
 
 # --- the webhook server -----------------------------------------------------------------------

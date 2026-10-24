@@ -10,110 +10,110 @@
 
 Every gameweek it predicts how many points each of the ~700 Premier League players will score,
 works out the best transfers for your team, and messages you the advice on Telegram on the
-morning of the deadline. It runs on Google Cloud for under £2 a month.
+morning of the deadline. It's free.
 
-> **In short:** an end-to-end ML project. It covers data ingestion, a trained and backtested
-> model, a mathematical optimiser and a deployed, scheduled pipeline, with CI/CD and
-> infrastructure as code.
+## Sign up in a minute
+
+1. Open **[@fpl_optimiser_bot](https://t.me/fpl_optimiser_bot)** in Telegram and tap **Start**.
+2. Send it your **FPL team id** (just the number).
+3. That's it. You'll get your advice on the morning of each deadline.
+
+**Finding your team id:** sign in at [fantasy.premierleague.com](https://fantasy.premierleague.com)
+(in a browser, not the app) and open the **Points** tab. The address will look like
+`fantasy.premierleague.com/entry/1234567/event/8`: your id is the number after `entry/`, here
+`1234567`.
+
+| Send | To |
+|---|---|
+| a team id, or `/team 1234567` | link your team, or switch to a different one |
+| `/pause` / `/resume` | stop the messages for a while, then start them again |
+| `/delete` | remove everything the bot knows about you |
+| `/help` | see these commands |
+
+The bot only keeps your Telegram chat id and your FPL team id: no names, emails or passwords.
+Places are limited, so if it says it's full, try again later.
 
 ## What you get
 
 On deadline day, two pictures and hardly any words (a real gameweek 6 recommendation):
 
 <p align="center">
-  <img src="docs/images/pitch.png" alt="The recommended team on a pitch" width="49%">
-  <img src="docs/images/transfers.png" alt="The recommended transfers with form charts" width="49%">
+  <img src="docs/images/pitch.png" alt="The recommended team on a pitch" width="62%">
+  <img src="docs/images/transfers.png" alt="The recommended transfers with form charts" width="35.3%">
 </p>
 
 1. **Your team on a pitch**: club shirts, expected points (xPts) and fixture difficulty, with the
-   captain, new signings and injury doubts marked. It arrives with an animated 🔥 effect.
-2. **The transfers**: each swap as OUT ➜ IN with the expected-points gain, and a bar chart of
-   both players' last five gameweeks on the same scale. Buttons underneath open FPL's transfer
-   page.
+   captain, new signings and injury doubts marked.
+2. **The transfers**: each swap as OUT ➜ IN with the expected-points gain, and both players'
+   last five gameweeks. Buttons underneath open FPL's transfer page.
 
-The bot only recommends a transfer if it adds at least half a point: predictions are noisy, so a
-marginal swap isn't worth the risk. Here the manager had 5 free transfers banked, so all five
-swaps come at no cost. If the pictures can't be drawn for any reason, the same advice is sent as
-text instead.
+## How it picks your transfers
 
-To sign up, message the bot `/start` and send it your FPL team id. `/pause`, `/resume` and
-`/delete` do what they say.
+<p align="center">
+  <img src="docs/images/optimiser.svg" alt="How the optimiser works, in three steps: predict every player's points; solve for the best legal squad once for each number of transfers; pick the number of transfers whose gain beats the cost of hits" width="100%">
+</p>
+
+1. **Predict every player.** A trained model gives each player an expected points score (xPts)
+   for the next gameweek.
+2. **Solve the squad puzzle.** Picking 15 players under FPL's rules (positions, at most 3 per
+   club, the budget, a legal starting XI) is a mixed-integer program. The HiGHS solver finds the
+   squad with the most expected points, **provably the best**, not a guess. It does this once
+   for every number of transfers from 0 to 5, and picks the captain too.
+3. **Decide how many transfers.** Each transfer beyond your free ones costs a 4-point hit, and
+   predictions are noisy, so a transfer must earn at least **+0.5 points** to be worth making.
+   In the example, with 1 free transfer only the first swap pays: a second would gain almost
+   nothing after its hit. (The real manager had 5 free transfers banked, so all five swaps in the
+   pictures above were free.)
 
 ## Does the model work?
 
-Yes, and the backtest checks it honestly. Every gameweek is predicted by a model that has only
-seen earlier data ([full report](docs/backtest.md)):
+<p align="center">
+  <img src="docs/images/backtest.svg" alt="Backtest: the model's top-30 picks averaged 4.45 points against 3.76 for a recent-form baseline, and 4.52 against 3.93 for FPL's own ep_next prediction" width="100%">
+</p>
 
-| Head to head | Model | Other | Avg points of each gameweek's top-30 picks |
-|---|---|---|---|
-| vs a simple "recent form" baseline | **4.45** | 3.76 | model wins |
-| vs FPL's own expected points (`ep_next`)* | **4.52** | 3.93 | model wins |
+Every gameweek of the 2025-26 season was predicted by a model that had only seen earlier data,
+and its 30 highest-rated players were compared with the picks of two alternatives. It beats
+both, including FPL's own prediction. The backtest also checks for data leaking from the future
+on every run. [Full report](docs/backtest.md).
 
-\* on the 9 gameweeks where FPL's pre-deadline figure is available.
+## How it runs
 
-Honest caveat: it only just beats my first, simpler model (4.45 vs 4.40), and most of the extra
-features don't earn their place yet. They're candidates to prune as more data comes in.
+<p align="center">
+  <img src="docs/images/pipeline.svg" alt="The daily pipeline: at 10:00 UK ingest, predict and optimise run; if the deadline is today, notify sends the plan on Telegram. Training runs weekly." width="100%">
+</p>
 
-One lesson from building it: an early version made FPL's own numbers look better than the
-model. That turned out to be **data leakage**: the archived value secretly contained the result
-it was meant to predict. The backtest now checks for this leak on every run.
+Each step is a small container on Google Cloud that starts, does its job and stops, so the whole
+thing costs pennies a month. The bot that signs people up works the same way: it only wakes up
+when someone messages it. The data refreshes every day, but you only get a message on deadline
+day, and never the same gameweek twice.
 
-## How it works
+To see the message without waiting for a deadline, start a **test run**. It sends straight away,
+only to users marked `tester: true`, and doesn't count as the gameweek's message:
 
-```mermaid
-flowchart LR
-    S[Cloud Scheduler<br/>daily 10:00 UK] --> W[Cloud Workflows]
-    W --> I[ingest<br/>FPL API → Parquet]
-    I --> P[predict<br/>expected points]
-    P --> O[optimise<br/>best transfers per user]
-    O --> N[notify<br/>Telegram, deadline days only]
-    T[train<br/>weekly] -. promotes model .-> P
-    GCS[(Cloud Storage<br/>data + models)]
-    I & P & O & T --- GCS
+```
+gcloud workflows run fpl-pipeline --location europe-west2 --data='{"test":true}'
 ```
 
-| Step | What it does |
-|---|---|
-| `ingest` | Saves a snapshot of the official FPL API (players, teams, fixtures, results). |
-| `train` | Trains a model weekly, tests it, and only puts it live if it passes a quality gate. |
-| `predict` | Uses the live model to predict every player's points for the next gameweek. |
-| `optimise` | Finds each user's best team for 0 to 5 transfers, including the 4-point hits. |
-| `notify` | Draws the pictures and sends them on Telegram, only on deadline days and never twice. |
-| `bot` | Telegram's webhook: registers whoever messages it and links their FPL team (a Cloud Run service that also scales to zero). |
+(In Windows PowerShell, escape the quotes: `--data='{\"test\":true}'`.)
 
-Each step is a small container that runs, does its job and stops, so it costs nothing while
-idle. The bot only starts when someone messages it.
+## Under the hood
 
-## Engineering highlights
-
-- **Optimisation as a maths problem.** The squad rules (15 players, 2/5/5/3 by position, at most
-  3 per club, the budget, a valid formation, a captain) are encoded as a mixed-integer program
-  and solved exactly with HiGHS (via SciPy).
-- **Training is separate from serving.** Every trained model is saved with a "model card" (data
-  hash, features, parameters, git commit). A new model only goes live if it beats both
-  baselines and the current model, and `predict` refuses to run if the features don't match.
-- **Handles the messy reality.** FPL hides transfers you've already made until the deadline
-  passes, so users can tell the bot about them. Every message lists the assumptions it rests on.
-- **Pictures, not paragraphs.** The pitch and transfer graphics are drawn in Python with Pillow
-  and sent through the Telegram Bot API with link buttons and message effects. If drawing fails,
-  the advice still goes out as text.
-- **Safe to re-run.** Each job overwrites its own output, and sending is an atomic "claim", so a
-  retry never sends a message twice.
-- **Tested.** About 200 tests using fake data sources, plus contract tests that run the same
-  suite against the real database (Firestore emulator) and an in-memory version.
-- **Shipped through CI/CD.** Pull requests run lint, type checks, tests and Docker builds. Merging
-  deploys only the parts that changed, using short-lived credentials and no stored keys.
-
-## Tech stack
-
-Python 3.12 · pandas · LightGBM · SciPy (HiGHS MILP) · Pillow · Telegram Bot API · Parquet · Docker ·
-Google Cloud (Cloud Run Jobs and a service, Workflows, Scheduler, Cloud Storage, Firestore, Secret Manager) ·
-Terraform · GitHub Actions · uv · ruff · mypy · pytest
+- **Python 3.12** with pandas and LightGBM for the model, SciPy's HiGHS for the optimiser, and
+  Pillow for the pictures.
+- **Google Cloud**: Cloud Run jobs (and a Cloud Run service for the bot), Workflows and Scheduler;
+  Parquet files in Cloud Storage; users in Firestore. All of it is defined in Terraform in
+  [fpl-optimiser-infra](https://github.com/jameso127/fpl-optimiser-infra).
+- **Models are gated.** A newly trained model only goes live if it beats the baselines and the
+  current model. Each one is saved with a model card: the data, features and git commit it came
+  from.
+- **CI/CD with GitHub Actions.** Pull requests run lint, type checks, about 200 tests and Docker
+  builds. Merging deploys only the parts that changed, with no stored keys.
 
 ## Run it yourself
 
 You need [uv](https://docs.astral.sh/uv/). Copy `.env.example` to `.env` and fill in your FPL
-team id, a Telegram bot token (from @BotFather) and your chat id.
+team id, a Telegram bot token (from @BotFather) and your chat id. Locally there is just one
+user, you, so no database is needed.
 
 ```
 uv sync
@@ -122,23 +122,19 @@ uv run python -m ingest.main      # today's FPL data -> ./data
 uv run python -m train.main       # train, test and (maybe) promote a model
 uv run python -m predict.main
 uv run python -m optimise.main
-FORCE_NOTIFY=true uv run python -m notify.main   # send the message now
+NOTIFY_TEST=true uv run python -m notify.main   # send the message now
 ```
 
-`make pipeline` runs ingest through optimise; `make lint` and `make test` run the checks.
+`make pipeline` runs all of these except the history import; `make lint` and `make test` run the
+checks.
 
-### The bot in the cloud
-
-After the first deploy of `fpl-bot`, tell Telegram where it is (once, and again if the bot token
-changes; the URL is `terraform output bot_url` in the infra repo):
+In the cloud, people sign up through the bot, which saves them in Firestore. If you deploy
+your own copy, tell Telegram where the bot lives once, after its first deploy (the URL is
+`terraform output bot_url` in the infra repo):
 
 ```
-TELEGRAM_BOT_TOKEN=... uv run python -m bot.webhook https://fpl-bot-....run.app
+uv run python -m bot.webhook https://fpl-bot-....run.app
 ```
-
-This sets the webhook (with a secret header the bot checks) and the bot's command menu. While a
-webhook is set, Telegram's `getUpdates` no longer works, so to find a chat id use the bot itself
-or Firestore. At most `MAX_USERS` (default 50) can register; it caps what strangers can cost.
 
 ## Repo layout
 
@@ -146,22 +142,11 @@ or Firestore. At most `MAX_USERS` (default 50) can register; it caps what strang
 ingest/     FPL API -> Parquet, plus the one-off history import
 ml/         features, model, registry, promotion gate, monitoring, backtest
 train/      predict/     optimise/     notify/     one Cloud Run job each, with its Dockerfile
-bot/        the Telegram webhook (Cloud Run service): sign-up and commands
+bot/        the Telegram bot: sign-up and commands (a Cloud Run service)
 common/     shared settings, logging, storage, FPL client, users store, deadline rule
 tests/      unit and contract tests, with fake data sources
-docs/       backtest report and the README pictures (redraw: uv run python -m scripts.readme_images)
+scripts/    deploy helper (changed_components), README pictures and diagrams (readme_*)
+docs/       backtest report and the README images
 ```
-
-## Related repos
-
-- [fpl-optimiser-infra](https://github.com/jameso127/fpl-optimiser-infra): all the Google Cloud
-  infrastructure as Terraform (jobs, scheduler, workflow, storage, IAM, budget alerts).
-
-## Status and next steps
-
-- **Running:** all five jobs, deployed to Google Cloud by GitHub Actions on a daily schedule.
-- **Next:** an interactive Telegram bot (sign up with an invite, `/xi`, tell it about your
-  transfers) and a web frontend.
-- **Known limit:** the pipeline runs at 10:00 UK, so a deadline earlier than that is missed.
 
 `archive/` holds the original single-file version of the optimiser, kept for comparison.
