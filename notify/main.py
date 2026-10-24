@@ -25,10 +25,10 @@ from common.config import Settings, get_settings
 from common.fpl_client import FplClient, FplSource
 from common.logging import configure_logging
 from common.storage import latest_gameweek, read_json, recommendation_path
+from common.telegram import EFFECTS, Button, Sender, TelegramSender
 from common.users import UserRepository, get_user_repository
 from notify.format import format_recommendation, notes, summary
 from notify.pitch import draw_pitch
-from notify.telegram import EFFECTS, Button, Sender, TelegramSender
 from notify.transfers import draw_transfers
 
 log = logging.getLogger(__name__)

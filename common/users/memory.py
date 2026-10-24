@@ -33,6 +33,10 @@ class InMemoryUserRepository:
             self._users.pop(chat_id, None)
             self._declared.pop(chat_id, None)
 
+    def count(self) -> int:
+        with self._lock:
+            return len(self._users)
+
     def list_active(self) -> list[User]:
         with self._lock:
             return [

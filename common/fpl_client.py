@@ -95,7 +95,11 @@ class FplClient:
         result: dict[str, Any] = self.get(f"event/{gameweek}/live/")
         return result
 
-    # Per-manager endpoints (used by the optimiser to rebuild a squad).
+    # Per-manager endpoints (used by the optimiser to rebuild a squad, and the bot to check ids).
+    def entry(self, team_id: int) -> dict[str, Any]:
+        result: dict[str, Any] = self.get(f"entry/{team_id}/")
+        return result
+
     def entry_history(self, team_id: int) -> dict[str, Any]:
         result: dict[str, Any] = self.get(f"entry/{team_id}/history/")
         return result

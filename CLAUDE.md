@@ -2,7 +2,7 @@
 
 Python services for a demo project: pulls Fantasy Premier League (FPL) API data, predicts
 expected points per player, optimises squads and transfers, sends recommendations on Telegram. A
-frontend and API are deferred.
+frontend and API are deferred; a Telegram bot service handles sign-up.
 
 **Hard constraint: must stay cheap (target < £2/month on GCP).** Prefer serverless,
 scale-to-zero. Never add an always-on resource.
@@ -25,6 +25,8 @@ Provided to this repo as GitHub Actions variables / runtime env vars:
   (model registry) and `monitoring/season=<yyyy-yy>/...`
 - Cloud Run jobs (pre-created by infra): `fpl-ingest`, `fpl-train`, `fpl-predict`, `fpl-optimise`,
   `fpl-notify`
+- Cloud Run service (pre-created by infra): `fpl-bot`, the public Telegram webhook (scale to zero,
+  max one instance). Its URL is the infra output `bot_url`.
 If I ask for a job/service that doesn't exist yet, say so rather than assuming it does.
 
 ## Architecture
@@ -37,6 +39,7 @@ Scheduler (daily 10:00 UK) -> Workflows -> Cloud Run Jobs: ingest -> predict -> 
 Scheduler (weekly) -> Cloud Run Job: train
                                    |
                            Cloud Storage (Parquet)
+Telegram -> webhook -> Cloud Run Service: bot (registers users, answers /start, /team, /pause...)
 ```
 
 - Shared work (ingest + predict for all players) runs daily for now; outputs for a gameweek are
@@ -56,6 +59,7 @@ Scheduler (weekly) -> Cloud Run Job: train
 /predict    Cloud Run Job: serve the promoted model -> expected points (never trains)
 /optimise   Optimiser library + Cloud Run Job (squad, transfers, hit penalties)
 /notify     Cloud Run Job: format recommendations and send them on Telegram
+/bot        Cloud Run Service: the Telegram webhook (sign-up and commands; open, up to MAX_USERS)
 /common     Shared package (schemas, GCS I/O, config, logging)
 /docs       Architecture diagram, backtest results
 /.github    Workflows
@@ -100,7 +104,9 @@ Scheduler (weekly) -> Cloud Run Job: train
      `uv.lock`, `.python-version` rebuild all; a new branch builds all).
   2. Push images to Artifact Registry as `$ARTIFACT_REGISTRY_REPO/<component>:<git sha>`.
      Never `latest`.
-  3. `gcloud run jobs update fpl-<component> --image ...`. There is no Cloud Run service yet.
+  3. `gcloud run jobs update fpl-<component> --image ...` (`gcloud run services update` for
+     `bot`, the only service). Registering the webhook with Telegram is a one-off
+     `python -m bot.webhook <url>` (Telegram settings, not GCP).
   A component whose deploy failed is not retried by the next push unless it changes again.
 - Pin actions to a version or SHA. Use least-privilege `permissions:` on each workflow.
 - Tests must not depend on the developer's `.env` (CI has none): `tests/conftest.py` turns it off.

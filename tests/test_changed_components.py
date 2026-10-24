@@ -9,7 +9,7 @@ ALL = ["ingest", "notify", "optimise", "predict", "train"]
 
 def test_a_change_in_one_component_rebuilds_only_what_contains_it() -> None:
     assert components_for(["optimise/model.py"], ALL) == ["optimise"]
-    assert components_for(["notify/telegram.py"], ALL) == ["notify"]
+    assert components_for(["notify/format.py"], ALL) == ["notify"]
     assert components_for(["train/main.py"], ALL) == ["train"]
     assert components_for(["predict/main.py"], ALL) == ["predict"]
 
@@ -70,7 +70,7 @@ def test_every_dockerfile_in_the_repo_matches_the_declared_image_contents() -> N
             for line in (root / component / "Dockerfile").read_text().splitlines()
             if line.startswith("COPY ") and not line.startswith("COPY --from")
             and line.split()[1].rstrip("/") in {"common", "ingest", "ml", "train", "predict",
-                                               "optimise", "notify"}
+                                               "optimise", "notify", "bot"}
         }  # fmt: skip
         assert copied == set(IMAGE_CONTENTS[component]), component
 

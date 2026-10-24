@@ -1,6 +1,6 @@
 """Decide which deployable components a change touches, for CI/CD path filtering.
 
-Each component is a Cloud Run job (or service) built from `<component>/Dockerfile`. A
+Each component is a Cloud Run job (or, for `bot`, a service) built from `<component>/Dockerfile`. A
 component is rebuilt when a file it copies into its image changes. Changes to `common/`
 (and to the dependency files) rebuild everything.
 
@@ -22,6 +22,7 @@ IMAGE_CONTENTS: dict[str, tuple[str, ...]] = {
     "predict": ("common/", "ml/", "predict/"),
     "optimise": ("common/", "optimise/"),
     "notify": ("common/", "notify/"),
+    "bot": ("common/", "bot/"),
 }
 
 # Files that change every image.
