@@ -2,7 +2,7 @@ name: deploy
 
 # On merge to main: build only the components whose files changed (changes to common/ or the
 # dependency files rebuild all), push images tagged with the git SHA (never `latest`), and
-# update the existing Cloud Run jobs to those images. Nothing is deployed from a laptop.
+# update the existing Cloud Run jobs (and the fpl-bot service) to those images. Nothing is deployed from a laptop.
 #
 # Authentication is Workload Identity Federation (no keys). The deployer account can only be
 # assumed by this repository on the main branch (enforced in the infra repo).
@@ -88,6 +88,8 @@ jobs:
           COMPONENT: ${{ matrix.component }}
           PROJECT: ${{ vars.GCP_PROJECT_ID }}
           REGION: ${{ vars.GCP_REGION }}
+        # bot is a Cloud Run service (the Telegram webhook); everything else is a job.
         run: |
-          gcloud run jobs update "fpl-${COMPONENT}" \
+          if [ "$COMPONENT" = "bot" ]; then kind=services; else kind=jobs; fi
+          gcloud run "$kind" update "fpl-${COMPONENT}" \
             --project "$PROJECT" --region "$REGION" --image "$IMAGE"

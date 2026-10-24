@@ -23,6 +23,10 @@ class UserRepository(Protocol):
         """Remove the user and everything stored about them (the `/delete` command)."""
         ...
 
+    def count(self) -> int:
+        """How many users are registered, active or not."""
+        ...
+
     def list_active(self) -> list[User]:
         """Active users who have linked an FPL team: who the batch jobs work for."""
         ...
