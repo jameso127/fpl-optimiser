@@ -12,6 +12,7 @@ team id (see common/users/models.py), so registering asks for nothing else.
 
 import html
 import logging
+import time
 from typing import Any, Protocol
 
 import requests
@@ -103,6 +104,7 @@ def _link(chat_id: int, arg: str, repo: UserRepository, fpl: EntryLookup, max_us
     if not arg.isdigit() or not 0 < int(arg) < MAX_TEAM_ID:
         return f"That doesn't look like a team id.\n\n{HOW_TO_FIND_ID}"
     team_id = int(arg)
+    start = time.monotonic()
     try:
         entry = fpl.entry(team_id)
     except requests.HTTPError as exc:
@@ -113,6 +115,8 @@ def _link(chat_id: int, arg: str, repo: UserRepository, fpl: EntryLookup, max_us
     except RuntimeError as exc:  # the client gave up after retrying
         log.warning("FPL team lookup failed", extra={"error": repr(exc)})
         return "I couldn't reach FPL just now. Please try again in a few minutes."
+    finally:
+        log.info("FPL team lookup", extra={"fpl_ms": round((time.monotonic() - start) * 1000)})
 
     user = _register(chat_id, repo, max_users)
     if user is None:
