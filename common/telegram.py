@@ -25,6 +25,19 @@ EFFECTS = {
 Button = tuple[str, str]  # (label, url)
 
 
+def ipv4_client() -> httpx.Client:
+    """An HTTP client that only uses IPv4, and gives up on a connection after 5 seconds.
+
+    api.telegram.org has an IPv6 address, but Cloud Run cannot send traffic over IPv6: a
+    connection tried that way hung for the whole 30-second timeout before falling back to IPv4,
+    so some bot replies took over 30 seconds. Binding to 0.0.0.0 rules IPv6 out.
+    """
+    return httpx.Client(
+        timeout=httpx.Timeout(30, connect=5),
+        transport=httpx.HTTPTransport(local_address="0.0.0.0"),
+    )
+
+
 class TelegramError(RuntimeError):
     pass
 
@@ -57,7 +70,7 @@ def _keyboard(buttons: Sequence[Sequence[Button]]) -> dict[str, Any]:
 class TelegramSender:
     def __init__(self, token: str, client: httpx.Client | None = None) -> None:
         self._api = f"{API}/bot{token}"
-        self._client = client or httpx.Client(timeout=30)
+        self._client = client or ipv4_client()
 
     def send(
         self,
@@ -76,6 +89,10 @@ class TelegramSender:
         if buttons:
             payload["reply_markup"] = _keyboard(buttons)
         self._with_effect("sendMessage", payload, effect_id)
+
+    def typing(self, chat_id: int) -> None:
+        """Show "typing..." in the chat until the next message arrives (or about 5 seconds)."""
+        self._post("sendChatAction", {"chat_id": chat_id, "action": "typing"}, None)
 
     def send_photo(
         self,

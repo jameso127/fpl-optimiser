@@ -15,8 +15,9 @@ and hold up that chat's later messages.
 import hmac
 import json
 import logging
+import time
 from http.server import BaseHTTPRequestHandler, HTTPServer
-from typing import Any, cast
+from typing import Any, Protocol, cast
 
 from bot.handlers import reply
 from bot.webhook import SECRET_HEADER, webhook_secret
@@ -31,23 +32,48 @@ log = logging.getLogger(__name__)
 MAX_BODY = 1_000_000  # Telegram updates are a few KB
 
 
+class BotSender(Sender, Protocol):
+    def typing(self, chat_id: int) -> None: ...
+
+
+def _ms(since: float) -> int:
+    return round((time.monotonic() - since) * 1000)
+
+
 class Bot:
     def __init__(
-        self, settings: Settings, repo: UserRepository, sender: Sender, secret: str
+        self, settings: Settings, repo: UserRepository, sender: BotSender, secret: str
     ) -> None:
         self.settings, self.repo, self.sender, self.secret = settings, repo, sender, secret
 
     def handle(self, update: dict[str, Any]) -> None:
+        """Show "typing...", work out the reply, send it, and log how long each step took (so
+        a slow reply can be traced to Telegram, Firestore or the FPL API)."""
+        timings: dict[str, int] = {}
         try:
+            chat = (update.get("message") or {}).get("chat") or {}
+            if chat.get("type") == "private" and "id" in chat:
+                start = time.monotonic()
+                try:
+                    self.sender.typing(int(chat["id"]))
+                except TelegramError as exc:  # only a nicety: never lose the reply over it
+                    log.warning("could not show typing", extra={"error": str(exc)})
+                timings["typing_ms"] = _ms(start)
+
+            start = time.monotonic()
             # A new FPL client per update: its cache lives as long as it does, and this
             # process can live for many messages.
             text = reply(update, self.repo, FplClient(self.settings), self.settings.max_users)
+            timings["reply_ms"] = _ms(start)
             if text is not None:
-                self.sender.send(int(update["message"]["chat"]["id"]), text)
+                start = time.monotonic()
+                self.sender.send(int(chat["id"]), text)
+                timings["send_ms"] = _ms(start)
+            log.info("update handled", extra=timings)
         except TelegramError as exc:
-            log.warning("could not reply", extra={"error": str(exc)})
+            log.warning("could not reply", extra={"error": str(exc), **timings})
         except Exception:
-            log.exception("could not handle an update")
+            log.exception("could not handle an update", extra=timings)
 
 
 class Server(HTTPServer):
