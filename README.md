@@ -35,6 +35,10 @@ The bot only recommends a transfer if it adds at least half a point: predictions
 marginal swap isn't worth the risk. Here the manager had 5 free transfers banked, so all five
 swaps come at no cost. If the pictures can't be drawn for any reason, the same advice is sent as
 text instead.
+
+To sign up, message the bot `/start` and send it your FPL team id. `/pause`, `/resume` and
+`/delete` do what they say.
+
 ## Does the model work?
 
 Yes, and the backtest checks it honestly. Every gameweek is predicted by a model that has only
@@ -75,9 +79,10 @@ flowchart LR
 | `predict` | Uses the live model to predict every player's points for the next gameweek. |
 | `optimise` | Finds each user's best team for 0 to 5 transfers, including the 4-point hits. |
 | `notify` | Draws the pictures and sends them on Telegram, only on deadline days and never twice. |
+| `bot` | Telegram's webhook: registers whoever messages it and links their FPL team (a Cloud Run service that also scales to zero). |
 
 Each step is a small container that runs, does its job and stops, so it costs nothing while
-idle.
+idle. The bot only starts when someone messages it.
 
 ## Engineering highlights
 
@@ -102,7 +107,7 @@ idle.
 ## Tech stack
 
 Python 3.12 · pandas · LightGBM · SciPy (HiGHS MILP) · Pillow · Telegram Bot API · Parquet · Docker ·
-Google Cloud (Cloud Run Jobs, Workflows, Scheduler, Cloud Storage, Firestore, Secret Manager) ·
+Google Cloud (Cloud Run Jobs and a service, Workflows, Scheduler, Cloud Storage, Firestore, Secret Manager) ·
 Terraform · GitHub Actions · uv · ruff · mypy · pytest
 
 ## Run it yourself
@@ -122,12 +127,26 @@ FORCE_NOTIFY=true uv run python -m notify.main   # send the message now
 
 `make pipeline` runs ingest through optimise; `make lint` and `make test` run the checks.
 
+### The bot in the cloud
+
+After the first deploy of `fpl-bot`, tell Telegram where it is (once, and again if the bot token
+changes; the URL is `terraform output bot_url` in the infra repo):
+
+```
+TELEGRAM_BOT_TOKEN=... uv run python -m bot.webhook https://fpl-bot-....run.app
+```
+
+This sets the webhook (with a secret header the bot checks) and the bot's command menu. While a
+webhook is set, Telegram's `getUpdates` no longer works, so to find a chat id use the bot itself
+or Firestore. At most `MAX_USERS` (default 50) can register; it caps what strangers can cost.
+
 ## Repo layout
 
 ```
 ingest/     FPL API -> Parquet, plus the one-off history import
 ml/         features, model, registry, promotion gate, monitoring, backtest
 train/      predict/     optimise/     notify/     one Cloud Run job each, with its Dockerfile
+bot/        the Telegram webhook (Cloud Run service): sign-up and commands
 common/     shared settings, logging, storage, FPL client, users store, deadline rule
 tests/      unit and contract tests, with fake data sources
 docs/       backtest report and the README pictures (redraw: uv run python -m scripts.readme_images)

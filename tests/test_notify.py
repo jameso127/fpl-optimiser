@@ -10,9 +10,10 @@ import pytest
 from PIL import Image
 from pydantic import SecretStr
 
+import common.telegram as telegram
 import notify.main
-import notify.telegram as telegram
 from common.config import Settings
+from common.telegram import EFFECTS, MAX_LENGTH, Button, TelegramError, TelegramSender
 from common.users import InMemoryUserRepository, User
 from notify.format import (
     CAPTION_LENGTH,
@@ -26,7 +27,6 @@ from notify.format import (
 from notify.main import next_deadline, send_recommendation
 from notify.main import run as notify_run
 from notify.pitch import draw_pitch
-from notify.telegram import EFFECTS, MAX_LENGTH, Button, TelegramError, TelegramSender
 from notify.transfers import draw_transfers
 from optimise.main import run as optimise_run
 from tests import fakes

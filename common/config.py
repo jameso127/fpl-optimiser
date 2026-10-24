@@ -33,6 +33,11 @@ class Settings(BaseSettings):
     telegram_bot_token: SecretStr | None = None  # a secret: from Secret Manager in production
     telegram_chat_id: int | None = None  # the owner's chat, used in single-user mode
 
+    # Bot only: anyone can register by messaging the bot, up to this many users (each one adds
+    # FPL API calls and optimiser time, so this caps the cost of strangers finding it).
+    max_users: int = 50
+    port: int = 8080  # Cloud Run sets PORT
+
     # Optimiser: whose team, how many transfers to consider, and how cautious to be.
     fpl_team_id: int | None = None
     max_transfers: int = 5  # evaluate 0..this many transfers (5: as many as can be banked)

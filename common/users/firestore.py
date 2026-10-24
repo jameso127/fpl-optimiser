@@ -83,6 +83,11 @@ class FirestoreUserRepository:
         self._delete_all(snap.reference.collection("declared").stream())
         snap.reference.delete()
 
+    def count(self) -> int:
+        # An aggregation query: one read per 1000 documents, not one per user.
+        result = self._db.collection("users").count().get()
+        return int(result[0][0].value)
+
     def list_active(self) -> list[User]:
         query = self._db.collection("users").where(filter=FieldFilter("active", "==", True))
         users = [User.model_validate(_data(d)) for d in query.stream()]
