@@ -10,7 +10,28 @@
 
 Every gameweek it predicts how many points each of the ~700 Premier League players will score,
 works out the best transfers for your team, and messages you the advice on Telegram on the
-morning of the deadline.
+morning of the deadline. It's free.
+
+## Sign up in a minute
+
+1. Open **[@fpl_optimiser_bot](https://t.me/fpl_optimiser_bot)** in Telegram and tap **Start**.
+2. Send it your **FPL team id** (just the number).
+3. That's it. You'll get your advice on the morning of each deadline.
+
+**Finding your team id:** sign in at [fantasy.premierleague.com](https://fantasy.premierleague.com)
+(in a browser, not the app) and open the **Points** tab. The address will look like
+`fantasy.premierleague.com/entry/1234567/event/8`: your id is the number after `entry/`, here
+`1234567`.
+
+| Send | To |
+|---|---|
+| a team id, or `/team 1234567` | link your team, or switch to a different one |
+| `/pause` / `/resume` | stop the messages for a while, then start them again |
+| `/delete` | remove everything the bot knows about you |
+| `/help` | see these commands |
+
+The bot only keeps your Telegram chat id and your FPL team id: no names, emails or passwords.
+Places are limited, so if it says it's full, try again later.
 
 ## What you get
 
@@ -62,7 +83,8 @@ on every run. [Full report](docs/backtest.md).
 </p>
 
 Each step is a small container on Google Cloud that starts, does its job and stops, so the whole
-thing costs pennies a month. The data refreshes every day, but you only get a message on deadline
+thing costs pennies a month. The bot that signs people up works the same way: it only wakes up
+when someone messages it. The data refreshes every day, but you only get a message on deadline
 day, and never the same gameweek twice.
 
 To see the message without waiting for a deadline, start a **test run**. It sends straight away,
@@ -78,8 +100,8 @@ gcloud workflows run fpl-pipeline --location europe-west2 --data='{"test":true}'
 
 - **Python 3.12** with pandas and LightGBM for the model, SciPy's HiGHS for the optimiser, and
   Pillow for the pictures.
-- **Google Cloud**: Cloud Run jobs, Workflows and Scheduler; Parquet files in Cloud Storage;
-  users in Firestore. All of it is defined in Terraform in
+- **Google Cloud**: Cloud Run jobs (and a Cloud Run service for the bot), Workflows and Scheduler;
+  Parquet files in Cloud Storage; users in Firestore. All of it is defined in Terraform in
   [fpl-optimiser-infra](https://github.com/jameso127/fpl-optimiser-infra).
 - **Models are gated.** A newly trained model only goes live if it beats the baselines and the
   current model. Each one is saved with a model card: the data, features and git commit it came
@@ -106,9 +128,13 @@ NOTIFY_TEST=true uv run python -m notify.main   # send the message now
 `make pipeline` runs all of these except the history import; `make lint` and `make test` run the
 checks.
 
-In the cloud, each user is a document in the Firestore `users` collection, with `chat_id`
-(their Telegram chat), `fpl_team_id`, `active` (`false` pauses them) and optionally `tester`.
-The document id doesn't matter.
+In the cloud, people sign up through the bot, which saves them in Firestore. If you deploy
+your own copy, tell Telegram where the bot lives once, after its first deploy (the URL is
+`terraform output bot_url` in the infra repo):
+
+```
+uv run python -m bot.webhook https://fpl-bot-....run.app
+```
 
 ## Repo layout
 
@@ -116,6 +142,7 @@ The document id doesn't matter.
 ingest/     FPL API -> Parquet, plus the one-off history import
 ml/         features, model, registry, promotion gate, monitoring, backtest
 train/      predict/     optimise/     notify/     one Cloud Run job each, with its Dockerfile
+bot/        the Telegram bot: sign-up and commands (a Cloud Run service)
 common/     shared settings, logging, storage, FPL client, users store, deadline rule
 tests/      unit and contract tests, with fake data sources
 scripts/    deploy helper (changed_components), README pictures and diagrams (readme_*)

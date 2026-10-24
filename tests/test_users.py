@@ -69,6 +69,16 @@ def test_only_active_users_with_a_team_are_listed_in_order(repo: UserRepository)
     assert [u.chat_id for u in repo.list_active()] == [1, 3]
 
 
+def test_count_includes_paused_users_and_users_without_a_team(repo: UserRepository) -> None:
+    assert repo.count() == 0
+    repo.save(User(chat_id=1, fpl_team_id=10))
+    repo.save(User(chat_id=2, active=False))
+    repo.save(User(chat_id=3))
+    repo.save(User(chat_id=1, fpl_team_id=11))  # saving again does not add a user
+
+    assert repo.count() == 3
+
+
 def test_declared_transfers_come_back_in_order_for_the_right_gameweek(
     repo: UserRepository,
 ) -> None:

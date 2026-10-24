@@ -10,7 +10,7 @@ from html import escape as _escape
 from typing import Any
 from zoneinfo import ZoneInfo
 
-from notify.telegram import MAX_LENGTH
+from common.telegram import MAX_LENGTH
 
 LONDON = ZoneInfo("Europe/London")
 CAPTION_LENGTH = 1024  # Telegram's limit for a photo caption
