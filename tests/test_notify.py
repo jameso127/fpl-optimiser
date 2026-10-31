@@ -210,6 +210,27 @@ def test_the_verdict_says_hold_or_how_many_transfers(
     assert f"{first['out']['name']} ➜ <b>{first['in']['name']}</b>" in move_text
 
 
+def test_a_swap_shows_what_it_earns_over_the_plan(settings: Settings, world: fakes.World) -> None:
+    rec = _recommend(settings, world, fakes.TEAM_ID)
+    moved = next(o for o in rec["options"] if o["transfers"] > 0)
+    first = moved["moves"][0]
+    # A player bought for later fixtures: worse next week, better over the plan.
+    first["in"]["xpts"], first["out"]["xpts"], first["gain"] = 2.0, 5.0, 4.5
+    planned = {**rec, "recommended_transfers": moved["transfers"], "horizon": 5}
+    text = "".join(format_recommendation(planned))
+
+    assert "<i>+4.5 pts</i>" in text and "<i>-3.0 pts</i>" not in text
+    assert "expected over 5 GWs" in text
+    assert draw_transfers(planned) is not None
+
+    # A recommendation written before the plan (no gain, no horizon) uses next week's figures.
+    del first["gain"]
+    older = {k: v for k, v in planned.items() if k != "horizon"}
+    text = "".join(format_recommendation(older))
+    assert "<i>-3.0 pts</i>" in text and "GWs" not in text
+    assert draw_transfers(older) is not None
+
+
 def test_text_from_outside_is_escaped_for_telegram_html(
     settings: Settings, world: fakes.World
 ) -> None:
