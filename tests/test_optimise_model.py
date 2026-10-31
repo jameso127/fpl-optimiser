@@ -251,6 +251,21 @@ def test_a_player_who_is_poor_next_week_but_strong_after_is_bought_when_planning
     assert planned.xi_xpts <= one_week.xi_xpts + 1e-9
 
 
+def test_the_xi_and_captain_shown_are_the_best_for_next_week_whatever_comes_after() -> None:
+    problem, world = _problem()
+    # Later weeks reverse next week's order, so a plan that let them sway the XI would differ.
+    top = max(p.xpts for p in problem.pool)
+    later: dict[int, tuple[float, ...]] = {p.id: (top - p.xpts,) * 2 for p in problem.pool}
+    planned = model.solve(_ahead(problem, later, 3), 0)
+    next_week_only = model.solve(problem, 0)
+
+    assert planned is not None and next_week_only is not None
+    assert set(planned.xi) | set(planned.bench) == set(world.squad)  # no transfers: same squad
+    assert set(planned.xi) == set(next_week_only.xi)
+    assert planned.captain == next_week_only.captain
+    assert planned.xi_xpts == pytest.approx(next_week_only.xi_xpts)
+
+
 def test_players_must_have_figures_for_the_same_gameweeks() -> None:
     problem, _ = _problem()
     first = problem.pool[0]
