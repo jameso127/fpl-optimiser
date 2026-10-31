@@ -1,3 +1,4 @@
+import dataclasses
 import itertools
 from collections import Counter
 
@@ -174,7 +175,7 @@ def test_an_illegal_current_squad_is_reported_not_papered_over() -> None:
 
 
 def _sol(k: int, net: float) -> Solution:
-    return Solution(k, 0.0, (), (), 0, 0, tuple(range(k)), tuple(range(k)), net, 0.0, net, 0)
+    return Solution(k, 0.0, (), (), 0, 0, tuple(range(k)), tuple(range(k)), net, 0.0, net, net, 0)
 
 
 def test_recommend_holds_unless_each_transfer_earns_its_place() -> None:
@@ -195,3 +196,67 @@ def test_recommend_prefers_fewer_transfers_when_the_gain_is_marginal() -> None:
 def test_recommend_requires_the_hold_option() -> None:
     with pytest.raises(ValueError, match="not a legal squad"):
         model.recommend([_sol(1, 40.0)])
+
+
+# --- planning over several gameweeks ----------------------------------------------------------
+
+
+def _ahead(problem: Problem, later: dict[int, tuple[float, ...]], weeks: int) -> Problem:
+    """The same problem planned over `weeks` gameweeks: each player scores his next-gameweek
+    expected points every week, unless `later` gives him other figures."""
+    pool = tuple(
+        dataclasses.replace(p, later=later.get(p.id, (p.xpts,) * (weeks - 1))) for p in problem.pool
+    )
+    return dataclasses.replace(problem, pool=pool)
+
+
+def test_a_horizon_of_identical_weeks_counts_the_same_team_once_per_week() -> None:
+    problem, _ = _problem()
+    flat = model.solve(problem, 0)
+    planned = model.solve(_ahead(problem, {}, 3), 0)
+
+    assert flat is not None and planned is not None
+    assert planned.xi == flat.xi and planned.captain == flat.captain
+    assert planned.xi_xpts == pytest.approx(flat.xi_xpts)
+    assert planned.plan_xpts == pytest.approx(flat.xi_xpts * (1 + 0.85 + 0.85**2))
+    assert flat.plan_xpts == pytest.approx(flat.xi_xpts)  # one gameweek: the plan is that week
+
+
+def test_a_player_who_is_poor_next_week_but_strong_after_is_bought_when_planning_ahead() -> None:
+    problem, world = _problem(free_transfers=1)
+    by_id = _by_id(problem)
+    owned = [by_id[i] for i in world.squad]
+    clubs = Counter(p.team for p in owned)
+    cheapest_mid = min(p.price for p in owned if p.position == 3)
+    target = next(
+        p
+        for p in sorted(problem.pool, key=lambda p: p.price)
+        if p.id not in world.squad and p.position == 3 and clubs[p.team] < 3
+        and p.price <= cheapest_mid
+    )  # fmt: skip
+    problem = dataclasses.replace(
+        problem,
+        pool=tuple(
+            dataclasses.replace(p, xpts=0.1) if p.id == target.id else p for p in problem.pool
+        ),
+    )
+
+    one_week = model.solve(problem, 1)
+    planned = model.solve(_ahead(problem, {target.id: (20.0, 20.0)}, 3), 1)
+
+    assert one_week is not None and planned is not None
+    assert target.id not in one_week.transfers_in
+    assert planned.transfers_in == (target.id,)
+    # He is bought for later: next week he sits on the bench or is outscored.
+    assert planned.xi_xpts <= one_week.xi_xpts + 1e-9
+
+
+def test_players_must_have_figures_for_the_same_gameweeks() -> None:
+    problem, _ = _problem()
+    first = problem.pool[0]
+    broken = dataclasses.replace(
+        problem, pool=(dataclasses.replace(first, later=(1.0,)), *problem.pool[1:])
+    )
+
+    with pytest.raises(ValueError, match="same gameweeks"):
+        _ = broken.horizon

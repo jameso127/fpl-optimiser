@@ -54,6 +54,20 @@ def test_live_performance_compares_served_predictions_with_results_and_ep_next(
     assert row["spearman_xpts"] > 0.9 > 0 > row["spearman_ep_next"]
 
 
+def test_only_the_next_gameweeks_predictions_are_judged(tmp_path: Path) -> None:
+    settings = Settings(data_dir=str(tmp_path))
+    _store(settings, 3, xpts_good=True)
+    next_gw = read_parquet(settings, gw_path(SEASON, 3, "predictions")).assign(horizon=1)
+    # A bad forecast for a later gameweek, stored in the same file, must not count against
+    # gameweek 3's results.
+    later = next_gw.assign(horizon=2, xpts=9 - next_gw["xpts"])
+    write_parquet(settings, pd.concat([next_gw, later]), gw_path(SEASON, 3, "predictions"))
+    row = monitor.live_performance(settings, SEASON).iloc[0]
+
+    assert row["players"] == 60
+    assert row["spearman_xpts"] > 0.9
+
+
 def test_a_blank_gameweek_player_is_not_scored(tmp_path: Path) -> None:
     settings = Settings(data_dir=str(tmp_path))
     _store(settings, 3, xpts_good=True)

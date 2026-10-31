@@ -143,13 +143,31 @@ def test_a_missing_team_id_or_predictions_is_a_clear_error(tmp_path: Path) -> No
 
 def test_the_pool_has_positive_scorers_and_everyone_already_owned() -> None:
     world = fakes.synthetic_world()
-    xpts = world.players.set_index("id")["xpts"]
+    preds = world.players[["id", "xpts"]]
+    xpts = preds.set_index("id")["xpts"]
     owned = set(world.squad)
-    pool_ids = {p.id for p in build_pool(world.players, xpts, owned)}
+    pool_ids = {p.id for p in build_pool(world.players, preds, owned)}
 
     assert owned <= pool_ids
     assert all(i in owned or xpts[i] > 0 for i in pool_ids)
     assert not any(i not in owned and xpts[i] == 0 for i in pool_ids)
+
+
+def test_the_pool_carries_each_gameweek_of_the_horizon() -> None:
+    world = fakes.synthetic_world()
+    ids = world.players["id"].tolist()
+    benched, back_later = ids[0], ids[1]
+    preds = pd.concat(
+        [pd.DataFrame({"id": ids, "horizon": h, "xpts": [float(h)] * len(ids)}) for h in (1, 2, 3)]
+    )
+    # One player scores nothing in any gameweek; another is out next week but back after.
+    preds.loc[preds["id"] == benched, "xpts"] = 0.0
+    preds.loc[(preds["id"] == back_later) & (preds["horizon"] == 1), "xpts"] = 0.0
+    pool = {p.id: p for p in build_pool(world.players, preds, owned=set())}
+
+    assert benched not in pool
+    assert pool[back_later].xpts == 0.0 and pool[back_later].later == (2.0, 3.0)
+    assert all(p.later == (2.0, 3.0) for i, p in pool.items() if i != back_later)
 
 
 def test_the_client_exposes_the_per_manager_endpoints() -> None:

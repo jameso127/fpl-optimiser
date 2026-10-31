@@ -36,13 +36,30 @@ from optimise.squad import EntrySource, Squad
 log = logging.getLogger(__name__)
 
 
-def build_pool(players: pd.DataFrame, xpts: pd.Series, owned: set[int]) -> list[Player]:
-    """Everyone with a positive expected score, plus everyone already in the squad."""
+def horizon_xpts(preds: pd.DataFrame) -> pd.DataFrame:
+    """Expected points per player id (rows) and gameweek of the horizon (columns, 1 = next).
+
+    Predictions without a `horizon` column are a single gameweek. A player missing from a
+    gameweek scores 0 in it.
+    """
+    preds = preds if "horizon" in preds.columns else preds.assign(horizon=1)
+    return preds.pivot_table(index="id", columns="horizon", values="xpts", aggfunc="sum").fillna(
+        0.0
+    )
+
+
+def build_pool(players: pd.DataFrame, preds: pd.DataFrame, owned: set[int]) -> list[Player]:
+    """Everyone with a positive expected score in some gameweek of the horizon, plus everyone
+    already in the squad."""
+    table = horizon_xpts(preds)
+    rows = {
+        int(i): [float(v) for v in r] for i, r in zip(table.index, table.to_numpy(), strict=True)
+    }
     pool = []
     for row in players.to_dict("records"):
         pid = int(row["id"])
-        points = float(xpts.get(pid, 0.0))
-        if points > 0 or pid in owned:
+        points = rows.get(pid, [0.0] * table.shape[1])
+        if any(p > 0 for p in points) or pid in owned:
             pool.append(
                 Player(
                     id=pid,
@@ -50,7 +67,8 @@ def build_pool(players: pd.DataFrame, xpts: pd.Series, owned: set[int]) -> list[
                     position=int(row["element_type"]),
                     team=int(row["team"]),
                     price=int(row["now_cost"]),
-                    xpts=points,
+                    xpts=points[0],
+                    later=tuple(points[1:]),
                 )
             )
     return pool
@@ -284,14 +302,14 @@ def run(
         declared=declared,
         names=names,
     )
-    xpts = preds.set_index("id")["xpts"]
-    pool = build_pool(players, xpts, set(my_squad.player_ids))
+    pool = build_pool(players, preds, set(my_squad.player_ids))
     problem = Problem(
         pool=tuple(pool),
         selling_prices=my_squad.selling_prices,
         bank=my_squad.bank,
         free_transfers=my_squad.free_transfers,
         bench_weight=settings.bench_weight,
+        horizon_decay=settings.horizon_decay,
     )
     options = model.solve_options(problem, settings.max_transfers)
     chosen = model.recommend(options, settings.min_gain_per_transfer)
