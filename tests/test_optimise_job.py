@@ -35,6 +35,24 @@ def test_writes_a_recommendation_for_every_number_of_transfers(tmp_path: Path) -
     assert stored["model_version"] == "test-model"
 
 
+def test_each_move_swaps_players_in_the_same_position_best_for_weakest(tmp_path: Path) -> None:
+    _, _, rec = _run(tmp_path, max_transfers=5)
+    biggest = max(rec["options"], key=lambda o: o["transfers"])
+    moves = biggest["moves"]
+
+    assert len(moves) == biggest["transfers"] >= 2
+    assert all(m["out"]["position"] == m["in"]["position"] for m in moves)
+    assert rec["horizon"] == 1  # the fake predictions cover one gameweek
+    for m in moves:
+        assert m["gain"] == pytest.approx(m["in"]["xpts"] - m["out"]["xpts"], abs=0.02)
+    for pos in {m["in"]["position"] for m in moves}:
+        same = [m for m in moves if m["in"]["position"] == pos]
+        assert [m["out"]["xpts"] for m in same] == sorted(m["out"]["xpts"] for m in same)
+        assert [m["in"]["xpts"] for m in same] == sorted(
+            (m["in"]["xpts"] for m in same), reverse=True
+        )
+
+
 def test_player_cards_carry_fixtures_form_and_injury_news() -> None:
     players = pd.DataFrame(
         {

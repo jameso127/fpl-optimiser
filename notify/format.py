@@ -83,18 +83,29 @@ def _header(rec: dict[str, Any], deadline: dt.datetime | None) -> str:
     return f"{title}\n⏰ Deadline {uk:%a} {uk.day} {uk:%b}, {uk:%H:%M} UK"
 
 
+def over(rec: dict[str, Any]) -> str:
+    """' over 5 GWs' when the plan covers several gameweeks (older recommendations: one)."""
+    n = int(rec.get("horizon", 1))
+    return f" over {n} GWs" if n > 1 else ""
+
+
+def swap_gain(move: dict[str, Any]) -> float:
+    """What a swap earns over the plan; next week's difference for older recommendations."""
+    return float(move.get("gain", move["in"]["xpts"] - move["out"]["xpts"]))
+
+
 def _verdict(rec: dict[str, Any], best: dict[str, Any]) -> str:
     n = best["transfers"]
     if n == 0:
         return (
             "✋ <b>Hold this week.</b>\n"
-            f"No transfer adds at least {rec['min_gain_per_transfer']:.1f} pts, "
+            f"No transfer adds at least {rec['min_gain_per_transfer']:.1f} pts{over(rec)}, "
             "so save it for later."
         )
     hit = f"after a -{best['hit_cost']:.0f} hit" if best["hit_cost"] else "no hit"
     return (
         f"✅ <b>Make {_plural(n, 'transfer')}</b> for "
-        f"<b>{best['gain_vs_hold']:+.1f} pts</b> expected ({hit})."
+        f"<b>{best['gain_vs_hold']:+.1f} pts</b> expected{over(rec)} ({hit})."
     )
 
 
@@ -118,7 +129,7 @@ def summary(rec: dict[str, Any], deadline: dt.datetime | None = None) -> str:
 
 def _move(i: int, move: dict[str, Any]) -> str:
     out, into = move["out"], move["in"]
-    swing = into["xpts"] - out["xpts"]
+    swing = swap_gain(move)
     lines = [
         f"{i}. {escape(out['name'])} ➜ <b>{escape(into['name'])}</b>  <i>{swing:+.1f} pts</i>",
         f"     {escape(out['team'])} £{out['sell_price']:.1f}m ➜ "
