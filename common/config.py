@@ -42,7 +42,12 @@ class Settings(BaseSettings):
     fpl_team_id: int | None = None
     max_transfers: int = 5  # evaluate 0..this many transfers (5: as many as can be banked)
     bench_weight: float = 0.1  # how much the bench counts towards the objective (tie-break)
-    min_gain_per_transfer: float = 0.5  # expected points a transfer must earn to be recommended
+    # Plan over the next `horizon` gameweeks: predict each, and judge transfers on the total, with
+    # each week further out counting `horizon_decay` times the one before (less certain).
+    horizon: int = 5
+    horizon_decay: float = 0.85
+    # Expected points (over the whole horizon) a transfer must earn to be recommended.
+    min_gain_per_transfer: float = 1.0
     max_free_transfers: int = 5  # free transfers can be banked up to this many
     free_transfers_override: int | None = None  # use when the estimate is wrong
 

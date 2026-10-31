@@ -33,6 +33,8 @@ def live_performance(settings: Settings, season: str) -> pd.DataFrame:
     rows = []
     for gw in sorted(served & finished):
         pred = read_parquet(settings, gw_path(season, gw, "predictions"))
+        if "horizon" in pred.columns:  # later gameweeks' rows are not about this gameweek
+            pred = pred[pred["horizon"] == 1]
         live = read_parquet(settings, gw_path(season, gw, "live"))[["id", "total_points"]]
         df = pred.merge(live.rename(columns={"total_points": "points"}), on="id", how="inner")
         df = df[df["fix_n"] >= 1]

@@ -3,25 +3,32 @@
 For each number of transfers k it finds the best squad reachable from the current one with
 exactly k transfers, together with the starting XI, captain and bench order.
 
-Variables, for every player i in the pool (all binary):
-    s_i  in the 15-man squad
-    x_i  in the starting XI
-    c_i  is the captain (scores double)
+It plans over a horizon of H gameweeks (h = 0 is the next one): the squad is chosen once, with
+today's transfers, and for every gameweek the best XI and captain from that squad are picked
+using that gameweek's expected points. Later transfers are not modelled, so a transfer is
+judged on what it earns across the whole horizon (a cautious view that favours holding). With
+H = 1 this is the single-gameweek optimiser.
 
-Objective (maximise):
-    sum_i xpts_i * (x_i + c_i)  +  w * sum_i xpts_i * (s_i - x_i)
-i.e. the starters once, the captain a second time, and a small weight w on the bench (it only
-scores when a starter does not play, which the expected points already reflect, so this is
-mostly a tie-break and a mild preference for a useful bench). A transfer hit of 4 points per
-transfer beyond the free ones is a constant for a fixed k, subtracted afterwards.
+Variables, for every player i in the pool (all binary):
+    s_i     in the 15-man squad
+    x_i,h   in the starting XI in gameweek h
+    c_i,h   is the captain in gameweek h (scores double)
+
+Objective (maximise), with xpts_i,h player i's expected points in gameweek h and d the decay:
+    sum_h d^h * [ sum_i xpts_i,h * (x_i,h + c_i,h)  +  w * sum_i xpts_i,h * (s_i - x_i,h) ]
+i.e. each gameweek's starters once, its captain a second time, and a small weight w on the
+bench (it only scores when a starter does not play, which the expected points already reflect,
+so this is mostly a tie-break and a mild preference for a useful bench). Gameweeks further out
+count less because their predictions are less certain. A transfer hit of 4 points per transfer
+beyond the free ones is a constant for a fixed k, subtracted afterwards.
 
 Constraints:
     squad size 15; 2 GK, 5 DEF, 5 MID, 3 FWD; at most 3 players per club
     budget: sum of buy prices <= selling prices of the current squad + bank, where a player
         already owned costs his *selling* price (not the market price) and everyone else his
         market price
-    XI: exactly 11, 1 GK, 3-5 DEF, 2-5 MID, 1-3 FWD, every starter is in the squad
-    exactly one captain, who starts
+    XI, in every gameweek: exactly 11, 1 GK, 3-5 DEF, 2-5 MID, 1-3 FWD, all in the squad
+    exactly one captain per gameweek, who starts
     transfers: exactly k current players are not in the new squad (so k are brought in)
 """
 
@@ -48,7 +55,12 @@ class Player:
     position: int  # 1 GK, 2 DEF, 3 MID, 4 FWD
     team: int
     price: int  # market price in tenths of a million
-    xpts: float
+    xpts: float  # expected points in the next gameweek
+    later: tuple[float, ...] = ()  # expected points in each gameweek after it (the horizon)
+
+    def xpts_in(self, h: int) -> float:
+        """Expected points in gameweek h of the horizon (0 = the next one)."""
+        return self.xpts if h == 0 else self.later[h - 1]
 
 
 @dataclass(frozen=True)
@@ -58,6 +70,22 @@ class Problem:
     bank: int  # tenths of a million
     free_transfers: int
     bench_weight: float = 0.1
+    horizon_decay: float = 0.85  # each gameweek further out counts this much less
+
+    @property
+    def horizon(self) -> int:
+        """How many gameweeks are planned for (every player has the same number)."""
+        lengths = {len(p.later) for p in self.pool}
+        if len(lengths) > 1:
+            raise ValueError("every player needs expected points for the same gameweeks")
+        return 1 + (lengths.pop() if lengths else 0)
+
+    def weight(self, h: int) -> float:
+        return float(self.horizon_decay**h)
+
+    def plan_xpts(self, player: Player) -> float:
+        """The player's expected points over the horizon, weighted as the objective weighs them."""
+        return sum(self.weight(h) * player.xpts_in(h) for h in range(self.horizon))
 
     @property
     def budget(self) -> int:
@@ -78,9 +106,10 @@ class Solution:
     vice_captain: int
     transfers_in: tuple[int, ...]
     transfers_out: tuple[int, ...]
-    xi_xpts: float  # starters plus the captain's extra, before any hit
+    xi_xpts: float  # next gameweek: starters plus the captain's extra, before any hit
     bench_xpts: float
-    net_xpts: float  # xi_xpts minus the hit
+    plan_xpts: float  # the same over the whole horizon, each gameweek weighted, before any hit
+    net_xpts: float  # plan_xpts minus the hit: what options are compared on
     bank_after: int
 
 
@@ -114,27 +143,32 @@ def hit_cost(transfers: int, free_transfers: int) -> float:
 def solve(problem: Problem, transfers: int, time_limit: float = 30.0) -> Solution | None:
     """Best squad with exactly `transfers` transfers, or None if there is none."""
     pool = problem.pool
-    n = len(pool)
-    s0, x0, c0 = 0, n, 2 * n  # column offsets of the three variable blocks
-    xp = np.array([p.xpts for p in pool])
+    n, horizon = len(pool), problem.horizon
     w = problem.bench_weight
+    # Column blocks: the squad, then an XI block and a captain block for each gameweek.
+    s0 = 0
 
-    cost = np.zeros(3 * n)
-    cost[s0 : s0 + n] = -w * xp
-    cost[x0 : x0 + n] = -(1 - w) * xp
-    cost[c0 : c0 + n] = -xp
+    def x0(h: int) -> int:
+        return n + 2 * n * h
 
-    rows = _Rows(3 * n)
+    def c0(h: int) -> int:
+        return n + 2 * n * h + n
+
+    n_vars = n + 2 * n * horizon
+
+    cost = np.zeros(n_vars)
+    for h in range(horizon):
+        xp = problem.weight(h) * np.array([p.xpts_in(h) for p in pool])
+        cost[s0 : s0 + n] += -w * xp
+        cost[x0(h) : x0(h) + n] = -(1 - w) * xp
+        cost[c0(h) : c0(h) + n] = -xp
+
+    rows = _Rows(n_vars)
     squad_cols = [s0 + i for i in range(n)]
     rows.add(squad_cols, [1.0] * n, SQUAD_SIZE, SQUAD_SIZE)
-    rows.add([x0 + i for i in range(n)], [1.0] * n, XI_SIZE, XI_SIZE)
-    rows.add([c0 + i for i in range(n)], [1.0] * n, 1, 1)
-
     for pos, count in SQUAD_BY_POSITION.items():
         idx = [i for i, p in enumerate(pool) if p.position == pos]
         rows.add([s0 + i for i in idx], [1.0] * len(idx), count, count)
-        lo, hi = XI_BOUNDS[pos]
-        rows.add([x0 + i for i in idx], [1.0] * len(idx), lo, hi)
     for team in {p.team for p in pool}:
         idx = [i for i, p in enumerate(pool) if p.team == team]
         rows.add([s0 + i for i in idx], [1.0] * len(idx), 0, MAX_PER_CLUB)
@@ -142,9 +176,15 @@ def solve(problem: Problem, transfers: int, time_limit: float = 30.0) -> Solutio
     prices = [float(problem.buy_price(p)) for p in pool]
     rows.add(squad_cols, prices, 0, float(problem.budget))
 
-    for i in range(n):
-        rows.add([x0 + i, s0 + i], [1.0, -1.0], -np.inf, 0)  # a starter is in the squad
-        rows.add([c0 + i, x0 + i], [1.0, -1.0], -np.inf, 0)  # the captain starts
+    for h in range(horizon):
+        rows.add([x0(h) + i for i in range(n)], [1.0] * n, XI_SIZE, XI_SIZE)
+        rows.add([c0(h) + i for i in range(n)], [1.0] * n, 1, 1)
+        for pos, (lo, hi) in XI_BOUNDS.items():
+            idx = [i for i, p in enumerate(pool) if p.position == pos]
+            rows.add([x0(h) + i for i in idx], [1.0] * len(idx), lo, hi)
+        for i in range(n):
+            rows.add([x0(h) + i, s0 + i], [1.0, -1.0], -np.inf, 0)  # a starter is in the squad
+            rows.add([c0(h) + i, x0(h) + i], [1.0, -1.0], -np.inf, 0)  # the captain starts
 
     kept = [s0 + i for i, p in enumerate(pool) if p.id in problem.selling_prices]
     rows.add(kept, [1.0] * len(kept), SQUAD_SIZE - transfers, SQUAD_SIZE - transfers)
@@ -152,7 +192,7 @@ def solve(problem: Problem, transfers: int, time_limit: float = 30.0) -> Solutio
     result = milp(
         c=cost,
         constraints=LinearConstraint(rows.matrix().tocsr(), rows.lb, rows.ub),
-        integrality=np.ones(3 * n),
+        integrality=np.ones(n_vars),
         bounds=Bounds(0, 1),
         options={"time_limit": time_limit},
     )
@@ -161,14 +201,24 @@ def solve(problem: Problem, transfers: int, time_limit: float = 30.0) -> Solutio
 
     chosen = np.round(result.x).astype(int)
     squad = [pool[i] for i in range(n) if chosen[s0 + i]]
-    xi = [pool[i] for i in range(n) if chosen[x0 + i]]
-    captain = next(pool[i] for i in range(n) if chosen[c0 + i])
-    return _describe(problem, transfers, squad, xi, captain)
+    xis = [[pool[i] for i in range(n) if chosen[x0(h) + i]] for h in range(horizon)]
+    captains = [next(pool[i] for i in range(n) if chosen[c0(h) + i]) for h in range(horizon)]
+    plan = sum(
+        problem.weight(h) * (sum(p.xpts_in(h) for p in xis[h]) + captains[h].xpts_in(h))
+        for h in range(horizon)
+    )
+    return _describe(problem, transfers, squad, xis[0], captains[0], plan)
 
 
 def _describe(
-    problem: Problem, transfers: int, squad: list[Player], xi: list[Player], captain: Player
+    problem: Problem,
+    transfers: int,
+    squad: list[Player],
+    xi: list[Player],
+    captain: Player,
+    plan_xpts: float,
 ) -> Solution:
+    """The solution as shown to the user: next gameweek's XI, captain and bench."""
     xi_ids = {p.id for p in xi}
     xi_sorted = sorted(xi, key=lambda p: (p.position, -p.xpts, p.id))
     bench = [p for p in squad if p.id not in xi_ids]
@@ -195,7 +245,8 @@ def _describe(
         transfers_out=tuple(sold),
         xi_xpts=xi_xpts,
         bench_xpts=sum(p.xpts for p in bench),
-        net_xpts=xi_xpts - hit,
+        plan_xpts=plan_xpts,
+        net_xpts=plan_xpts - hit,
         bank_after=problem.bank + refund - spend,
     )
 

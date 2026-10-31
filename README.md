@@ -54,13 +54,17 @@ On deadline day, two pictures and hardly any words (a real gameweek 6 recommenda
 </p>
 
 1. **Predict every player.** A trained model gives each player an expected points score (xPts)
-   for the next gameweek.
+   for each of the next five gameweeks, using each gameweek's own fixtures (a blank scores 0,
+   a double counts twice) and letting injury doubts fade back to fit.
 2. **Solve the squad puzzle.** Picking 15 players under FPL's rules (positions, at most 3 per
    club, the budget, a legal starting XI) is a mixed-integer program. The HiGHS solver finds the
-   squad with the most expected points, **provably the best**, not a guess. It does this once
-   for every number of transfers from 0 to 5, and picks the captain too.
+   squad with the most expected points over those five gameweeks, **provably the best**, not a
+   guess, picking the best XI and captain for each week. Weeks further out count less (each
+   0.85x the one before) because they are less certain. It does this once for every number of
+   transfers from 0 to 5.
 3. **Decide how many transfers.** Each transfer beyond your free ones costs a 4-point hit, and
-   predictions are noisy, so a transfer must earn at least **+0.5 points** to be worth making.
+   predictions are noisy, so a transfer must earn at least **+1 point** over the five weeks to
+   be worth making.
    In the example, with 1 free transfer only the first swap pays: a second would gain almost
    nothing after its hit. (The real manager had 5 free transfers banked, so all five swaps in the
    pictures above were free.)
