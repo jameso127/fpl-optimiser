@@ -25,7 +25,7 @@ from notify.draw import (
     shirt,
     text,
 )  # fmt: skip
-from notify.format import pick
+from notify.format import over, pick, swap_gain
 
 WIDTH = 1080
 HEADER, CARD, GAP = 180, 410, 24
@@ -94,25 +94,25 @@ def _form_chart(
         text(draw, (mid, baseline + 18), f"GW{game['gameweek']}", 20, MUTED, bold=False)
 
 
-def _arrow(draw: ImageDraw.ImageDraw, cx: float, cy: float, swing: float) -> None:
+def _arrow(draw: ImageDraw.ImageDraw, cx: float, cy: float, swing: float, label: str) -> None:
     draw.ellipse((cx - 38, cy - 38, cx + 38, cy + 38), fill=ACCENT if swing >= 0 else RED)
     draw.polygon([(cx - 18, cy - 8), (cx + 2, cy - 8), (cx + 2, cy - 20), (cx + 22, cy),
                   (cx + 2, cy + 20), (cx + 2, cy + 8), (cx - 18, cy + 8)], fill=INK)  # fmt: skip
     text(draw, (cx, cy + 66), f"{swing:+.1f}", 36, ACCENT if swing >= 0 else RED)
-    text(draw, (cx, cy + 98), "xPts", 22, MUTED, bold=False)
+    text(draw, (cx, cy + 98), label, 22, MUTED, bold=False)
 
 
-def _card(draw: ImageDraw.ImageDraw, top: float, move: dict[str, Any]) -> None:
+def _card(draw: ImageDraw.ImageDraw, top: float, move: dict[str, Any], label: str) -> None:
     out, into = move["out"], move["in"]
     draw.rounded_rectangle((MARGIN, top, WIDTH - MARGIN, top + CARD), radius=28, fill=PURPLE)
     points = [g["points"] for g in [*out.get("recent", []), *into.get("recent", [])]]
     scale_max = max([8, *points])
     _side(draw, 285, top, out, "OUT", out["sell_price"], scale_max, OUT_BAR)
     _side(draw, 795, top, into, "IN", into["price"], scale_max, IN_BAR)
-    _arrow(draw, WIDTH / 2, top + 110, into["xpts"] - out["xpts"])
+    _arrow(draw, WIDTH / 2, top + 110, swap_gain(move), label)
 
 
-def _header(draw: ImageDraw.ImageDraw, best: dict[str, Any]) -> None:
+def _header(draw: ImageDraw.ImageDraw, rec: dict[str, Any], best: dict[str, Any]) -> None:
     draw.rectangle((0, 0, WIDTH, HEADER), fill=PURPLE)
     draw.rectangle((0, HEADER - 8, WIDTH, HEADER), fill=ACCENT)
     text(draw, (56, 72), "TRANSFERS", 76, WHITE, anchor="lm")
@@ -120,7 +120,8 @@ def _header(draw: ImageDraw.ImageDraw, best: dict[str, Any]) -> None:
     sub = f"Bank after £{best['bank_after']:.1f}m · {hit}"
     text(draw, (58, 132), sub, 34, MUTED, anchor="lm", bold=False)
     text(draw, (WIDTH - 56, 72), f"{best['gain_vs_hold']:+.1f} xPts", 76, ACCENT, anchor="rm")
-    text(draw, (WIDTH - 56, 132), "vs keeping your team", 30, MUTED, anchor="rm", bold=False)
+    note = f"{over(rec).strip()} vs keeping your team".strip()
+    text(draw, (WIDTH - 56, 132), note, 30, MUTED, anchor="rm", bold=False)
 
 
 def draw_transfers(rec: dict[str, Any]) -> bytes | None:
@@ -131,7 +132,7 @@ def draw_transfers(rec: dict[str, Any]) -> bytes | None:
     height = HEADER + GAP + len(best["moves"]) * (CARD + GAP)
     image = Image.new("RGBA", (WIDTH, height), DEEP)
     draw = ImageDraw.Draw(image)
-    _header(draw, best)
+    _header(draw, rec, best)
     for i, move in enumerate(best["moves"]):
-        _card(draw, HEADER + GAP + i * (CARD + GAP), move)
+        _card(draw, HEADER + GAP + i * (CARD + GAP), move, over(rec).strip() or "xPts")
     return png(image)

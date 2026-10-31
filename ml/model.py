@@ -128,3 +128,29 @@ def availability(players: pd.DataFrame) -> pd.Series:
     avail[players["status"].isin(["u", "s"])] = 0.0
     avail.index = players["id"]
     return avail.clip(0.0, 1.0)
+
+
+RECOVERY_GAMEWEEKS = 3  # a doubtful or injured player is assumed fit again after this many
+
+
+def availability_ahead(players: pd.DataFrame, horizon: int) -> pd.DataFrame:
+    """Probability (0-1) each player features in each gameweek of the horizon.
+
+    Columns: id, horizon (1 = next gameweek), availability. FPL's news is only about the next
+    gameweek, so later ones follow a simple rule:
+      - unavailable (`u`, e.g. left the club or out long-term with no return date): 0 throughout
+      - suspended (`s`): 0 next gameweek, then fully available (most bans are one match)
+      - otherwise (a doubt or an injury): next gameweek's chance of playing, recovering in
+        equal steps to fully available over RECOVERY_GAMEWEEKS gameweeks
+    """
+    now = availability(players)
+    status = players.set_index("id")["status"]
+    rows = []
+    for h in range(1, horizon + 1):
+        recovered = min(1.0, (h - 1) / RECOVERY_GAMEWEEKS)
+        avail = now + (1.0 - now) * recovered
+        avail[status.reindex(avail.index) == "u"] = 0.0
+        if h > 1:
+            avail[status.reindex(avail.index) == "s"] = 1.0
+        rows.append(pd.DataFrame({"id": avail.index, "horizon": h, "availability": avail.values}))
+    return pd.concat(rows, ignore_index=True)

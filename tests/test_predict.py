@@ -122,6 +122,94 @@ def test_predict_gives_a_player_with_no_fixture_zero_points(
     assert (out.loc[teams.index[teams.isin([1, 2])], "xpts"] > 0).all()
 
 
+def _add_future_fixtures(settings: Settings) -> None:
+    """Gameweeks 4 and 5 after the fake season's 3: in 5, teams 3 and 4 have no game (a blank)."""
+    path = gw_path(SEASON, 3, "fixtures")
+    fixtures = read_parquet(settings, path)
+    later = pd.DataFrame(
+        [
+            {"id": 40, "event": 4, "team_h": 1, "team_a": 3, "team_h_difficulty": 3,
+             "team_a_difficulty": 3, "kickoff_time": "2025-09-06T14:00:00Z", "finished": False},
+            {"id": 41, "event": 4, "team_h": 2, "team_a": 4, "team_h_difficulty": 2,
+             "team_a_difficulty": 4, "kickoff_time": "2025-09-06T16:00:00Z", "finished": False},
+            {"id": 50, "event": 5, "team_h": 2, "team_a": 1, "team_h_difficulty": 4,
+             "team_a_difficulty": 2, "kickoff_time": "2025-09-13T14:00:00Z", "finished": False},
+        ]
+    )  # fmt: skip
+    write_parquet(settings, pd.concat([fixtures, later], ignore_index=True), path)
+
+
+def test_predict_scores_each_gameweek_of_the_horizon(tmp_path: Path, gate_passes: None) -> None:
+    settings = _ingested(tmp_path)
+    train_run(settings)
+    _add_future_fixtures(settings)
+    run_predict(settings.model_copy(update={"horizon": 1}))
+    next_only = _predictions(settings).set_index("id")
+
+    run_predict(settings.model_copy(update={"horizon": 5}))  # only 3 gameweeks are left
+    out = _predictions(settings)
+    teams = read_parquet(settings, gw_path(SEASON, 3, "players")).set_index("id")["team"]
+
+    assert sorted(out["gameweek"].unique()) == [3, 4, 5]
+    assert len(out) == 8 * 3
+    assert (out["horizon"] == out["gameweek"] - 2).all()
+    # The next gameweek is exactly what a one-gameweek run gives.
+    first = out[out["horizon"] == 1].set_index("id")
+    assert first["xpts"].to_dict() == pytest.approx(next_only["xpts"].to_dict())
+    # FPL's figure is only for the next gameweek.
+    assert first["ep_next"].notna().all() and out[out["horizon"] > 1]["ep_next"].isna().all()
+    # Gameweek 5 is a blank for teams 3 and 4, and a normal game for 1 and 2.
+    gw5 = out[out["gameweek"] == 5].set_index("id")
+    blank = teams.index[teams.isin([3, 4])]
+    assert (gw5.loc[blank, "fix_n"] == 0).all() and (gw5.loc[blank, "xpts"] == 0).all()
+    assert (gw5.loc[teams.index[teams.isin([1, 2])], "xpts"] > 0).all()
+
+
+def test_later_gameweeks_use_todays_form_with_their_own_fixture(tmp_path: Path) -> None:
+    from ml.data import season_features
+
+    settings = _ingested(tmp_path)
+    _add_future_fixtures(settings)
+    players = read_parquet(settings, gw_path(SEASON, 3, "players"))
+    teams = read_parquet(settings, gw_path(SEASON, 3, "teams"))
+    fixtures = read_parquet(settings, gw_path(SEASON, 3, "fixtures"))
+    now = season_features(settings, SEASON, [3], snapshot_gw=3, live_before=3)
+
+    ahead = features.features_ahead(now, players, teams, fixtures, [3, 4, 5])
+
+    # Gameweek 3 is unchanged, so serving the next gameweek is exactly as before.
+    pd.testing.assert_frame_equal(ahead[ahead["gameweek"] == 3].reset_index(drop=True), now)
+    # Later rows keep today's form (no data from after the deadline is invented or used)...
+    form = [c for c in features.FEATURES_V2 if c not in features.FIXTURE_COLUMNS]
+    gw4 = ahead[ahead["gameweek"] == 4].set_index("id")
+    pd.testing.assert_frame_equal(gw4[form], now.set_index("id")[form])
+    # ...with gameweek 4's own fixture: team 1 hosts team 3 (in gameweek 3 it hosted team 2).
+    team = players.set_index("id")["team"]
+    team1 = team.index[team == 1]
+    assert (gw4.loc[team1, "fix_home"] == 1).all()
+    assert (now.set_index("id").loc[team1, "fix_difficulty"] == 2).all()
+    assert (gw4.loc[team1, "fix_difficulty"] == 3).all()
+
+
+def test_injury_news_fades_over_the_horizon() -> None:
+    players = pd.DataFrame(
+        {
+            "id": [1, 2, 3, 4, 5],
+            "status": ["a", "d", "i", "u", "s"],
+            "chance_of_playing_next_round": [None, 75.0, 0.0, None, 0.0],
+        }
+    )
+    avail = model.availability_ahead(players, 5).pivot(
+        index="id", columns="horizon", values="availability"
+    )
+
+    assert list(avail.loc[1]) == [1.0] * 5  # no news
+    assert list(avail.loc[2]) == pytest.approx([0.75, 0.75 + 0.25 / 3, 0.75 + 0.5 / 3, 1, 1])
+    assert list(avail.loc[3]) == pytest.approx([0.0, 1 / 3, 2 / 3, 1, 1])  # injured: back in 3
+    assert list(avail.loc[4]) == [0.0] * 5  # unavailable throughout
+    assert list(avail.loc[5]) == [0.0, 1, 1, 1, 1]  # suspended for one match
+
+
 def test_serving_stops_if_the_features_no_longer_match_the_model(
     tmp_path: Path, gate_passes: None
 ) -> None:

@@ -328,3 +328,61 @@ def build_features(
 def usable(df: pd.DataFrame) -> pd.DataFrame:
     """Rows that can be trained or scored on: the player had at least one fixture."""
     return df[df["fix_n"] >= 1]
+
+
+# Columns that describe a gameweek's fixture rather than the player's form. When predicting
+# several gameweeks ahead, these come from each future fixture; everything else is form as it
+# stands now (there is no newer data to roll forward with).
+FIXTURE_COLUMNS = [
+    "fix_n", "fix_difficulty", "fix_home", "own_att", "own_def", "opp_att", "opp_def",
+    *REST, *[c for c in TEAM_FORM if c.startswith("o_")],
+]  # fmt: skip
+
+
+def features_ahead(
+    now: pd.DataFrame,
+    players: pd.DataFrame,
+    teams: pd.DataFrame,
+    fixtures: pd.DataFrame,
+    gameweeks: list[int],
+) -> pd.DataFrame:
+    """Feature rows for each of `gameweeks`, from `now`: the rows for the next gameweek.
+
+    Form (players' and their own team's) stays as it is in `now`, since it is all that is known
+    before the deadline. The fixture columns are each gameweek's own: opponent strength and
+    difficulty, home or away, rest days, and the opponent's form as it stands now. A gameweek
+    with no fixture gets `fix_n` 0 (a blank), a double gets 2. The first of `gameweeks` gives
+    back the same features as `now` (tests check this), so the next gameweek is unchanged.
+    """
+    team = players.set_index("id")["team"]
+    base = now.drop(columns=[*FIXTURE_COLUMNS, "gameweek"]).copy()
+    base["team"] = base["id"].map(team)
+
+    fixture = fixture_features(fixtures, teams)
+    rest = rest_days(fixtures)
+    if rest.empty:
+        rest = pd.DataFrame(columns=["team", "gameweek", *REST])
+
+    # Each team's own form now (the same on every one of its players' rows), as an opponent.
+    own_cols = [c for c in TEAM_FORM if c.startswith("t_")]
+    form_now = base.drop_duplicates("team")[["team", *own_cols]]
+    as_opp = form_now.rename(columns={"team": "opp", **{c: "o_" + c[2:] for c in own_cols}})
+    pairs = _fixture_long(fixtures)[["team", "opp", "gameweek"]]
+    pairs = pairs[pairs["gameweek"].isin(gameweeks)].merge(as_opp, on="opp", how="left")
+    opp_cols = [c for c in TEAM_FORM if c.startswith("o_")]
+    opp_form = pairs.groupby(["team", "gameweek"])[opp_cols].mean().reset_index()
+
+    frames = []
+    for gw in gameweeks:
+        rows = base.assign(gameweek=gw)
+        for table in (fixture, rest, opp_form):
+            rows = rows.merge(table[table["gameweek"] == gw], on=["team", "gameweek"], how="left")
+        rows["fix_n"] = rows["fix_n"].fillna(0)
+        if gw != gameweeks[0]:
+            rows["ep_next"] = np.nan  # FPL only publishes it for the next gameweek
+        frames.append(rows)
+    out = pd.concat(frames, ignore_index=True)[now.columns]
+    # Keep `now`'s column types (merging can widen e.g. fix_n to float), where no gap prevents it.
+    keep = {c: now[c].dtype for c in now.columns if out[c].dtype != now[c].dtype}
+    out = out.astype({c: t for c, t in keep.items() if not out[c].isna().any()})
+    return out.reset_index(drop=True)
